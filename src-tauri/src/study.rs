@@ -28,7 +28,8 @@ It must be answerable out loud in one or two sentences: no tables, code or heavy
 not just recall of a term, and never put the answer in the question.";
 
 pub const GRADE: &str = "You grade a student's spoken answer against a reference answer. \
-verdict is correct only if the key idea is right, partial if it is incomplete, wrong otherwise. \
+verdict is correct only if the key idea is right, partial only if the answer states part of the key idea correctly, wrong otherwise. \
+\"I don't know\", \"no idea\", silence and unrelated answers are always wrong. \
 feedback is at most two spoken sentences with no markdown, addressed to the student as \"you\": if the answer is not correct, say what was missing and state the right answer. \
 error_type is one of conceptual, calculation, recall, careless, none. The transcript may contain speech-recognition errors; be lenient about wording.";
 
