@@ -218,7 +218,15 @@ fn listen(hud: Hud) {
         if let Some(s) = stt.as_mut() {
             s.set_voiceprint(db.kv_get("voiceprint").and_then(|j| serde_json::from_str(&j).ok()));
         }
-        for chunk in rx {
+        // Anything that queued up while the last chunk was processed is merged into one push (up to 1 s):
+        // per-call overhead is small, but it lets a brief stall catch up at once instead of staying behind.
+        while let Ok(mut chunk) = rx.recv() {
+            while chunk.len() < 16_000 {
+                match rx.try_recv() {
+                    Ok(more) => chunk.extend(more),
+                    Err(_) => break,
+                }
+            }
             let rms = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len().max(1) as f32).sqrt();
             let _ = app.emit("level", rms * 8.0);
             #[cfg(feature = "voice")]

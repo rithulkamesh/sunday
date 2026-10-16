@@ -29,7 +29,12 @@ impl std::fmt::Display for UserMsg {
 impl std::error::Error for UserMsg {}
 
 const URL: &str = "http://localhost:11434/api/chat";
-const MODEL: &str = "qwen3:4b-instruct"; // not plain qwen3:4b: that is thinking-only and leaks its reasoning into replies
+pub const MODEL: &str = "qwen3:4b-instruct"; // not plain qwen3:4b: that is thinking-only and leaks its reasoning into replies
+/// How long Ollama keeps each model in memory after use. The text and embedding models are used every turn, so they stay
+/// loaded (a cold load costs 1.5-3 s on the next reply); the larger vision model is kept for a while after a screen look.
+pub const KEEP_TEXT: &str = "6h";
+pub const KEEP_VISION: &str = "20m";
+
 pub const VISION: &str = "qwen3-vl:4b-instruct";
 
 /// SUNDAY_MODEL, else the model picked in the palette, else the default.
@@ -81,8 +86,21 @@ struct Ctx<'a> {
     sources: RefCell<Vec<String>>,
 }
 
+/// Loads the text and embedding models in the background, so the first question isn't the one that pays for it.
+fn warm_up(model: String) {
+    std::thread::spawn(move || {
+        let t = std::time::Instant::now();
+        let _ = ureq::post("http://localhost:11434/api/generate")
+            .timeout(std::time::Duration::from_secs(120))
+            .send_json(json!({"model": model, "prompt": "", "keep_alive": KEEP_TEXT}));
+        let _ = crate::memory::embed(&["warm up".to_string()], true);
+        eprintln!("[perf] models warmed up in {:?}", t.elapsed());
+    });
+}
+
 pub fn spawn(hud: Hud, speak: Sender<Cmd>, db: Arc<Db>) -> Sender<Turn> {
     let (tx, rx) = channel::<Turn>();
+    warm_up(model_name(&db));
     std::thread::spawn(move || {
         let mut history = vec![json!({"role": "system", "content": study::TUTOR})];
         // Pick the conversation back up after a restart.
@@ -197,15 +215,16 @@ fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
             crate::screen::clear(&c.hud.app);
             Ok(say(c, "Cleared."))
         }
-        (Action::Screen(task), _) => crate::screen::explain(&c.hud.app, c.db, &task, &|msg| {
-            say(c, msg);
-        })
-        .map(|(text, marks)| {
-            if !marks.is_empty() {
-                crate::screen::show(&c.hud.app, &marks, 25);
+        (Action::Screen(task), _) => {
+            // Sentences are spoken as they're produced; `spoken` says whether that already happened.
+            let r = crate::screen::explain(&c.hud.app, c.db, &task, &|msg| {
+                say(c, msg);
+            }, &|| tts::epoch() != c.ep)?;
+            if !r.marks.is_empty() {
+                crate::screen::show(&c.hud.app, &r.marks, 25);
             }
-            say(c, &text)
-        }),
+            Ok(if r.spoken { r.text.trim().to_string() } else { say(c, &r.text) })
+        }
         _ => {
             let notes = c.db.search(q, 3);
             // Long-term memory: skip the embedding call entirely while there's nothing to recall.
@@ -349,7 +368,7 @@ pub fn run_skill(db: &Db, model: &str, id: &str, version: Option<i64>, input: &s
 
 /// Structured output: the schema constrains the model, serde validates, one retry, then give up.
 pub fn json<T: DeserializeOwned>(model: &str, system: &str, user: &str, schema: Value, timeout_s: u64) -> Res<T> {
-    let body = json!({"model": model, "stream": false, "think": false, "keep_alive": "30m", "format": schema,
+    let body = json!({"model": model, "stream": false, "think": false, "keep_alive": KEEP_TEXT, "format": schema,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]});
     for _ in 0..2 {
         let v: Value = ureq::post(URL).timeout(std::time::Duration::from_secs(timeout_s)).send_json(&body)?.into_json()?;
@@ -462,21 +481,28 @@ fn chat(c: &Ctx, history: &[Value], ctx: &Context) -> Res<String> {
     let (messages, sources) = build_messages(history, ctx);
     c.sources.borrow_mut().extend(sources);
     // think:false is ~5x faster to first word on reasoning models; keep_alive avoids reloading weights.
-    let body = json!({"model": c.model, "messages": messages, "stream": true, "think": false, "keep_alive": "30m"});
+    let body = json!({"model": c.model, "messages": messages, "stream": true, "think": false, "keep_alive": KEEP_TEXT});
+    let t0 = std::time::Instant::now();
     let resp = ureq::post(URL).send_json(body)?;
     let (mut full, mut pending) = (String::new(), String::new());
     let mut first = true; // the first chunk is cut at a comma so audio starts sooner
+    let mut first_token = true;
     for line in BufReader::new(resp.into_reader()).lines() {
         let v: Value = serde_json::from_str(&line?)?;
         if tts::epoch() != c.ep {
             return Ok(String::new()); // dropping the response closes the connection; Ollama stops
         }
         let Some(tok) = v["message"]["content"].as_str().filter(|t| !t.is_empty()) else { continue };
+        if std::mem::take(&mut first_token) {
+            eprintln!("[perf] model: first token after {:?}", t0.elapsed());
+        }
         full.push_str(tok);
         pending.push_str(tok);
         c.hud.touch();
         while let Some(s) = take_sentence(&mut pending, first) {
-            first = false;
+            if std::mem::replace(&mut first, false) {
+                eprintln!("[perf] model: first sentence ready after {:?}", t0.elapsed());
+            }
             if c.voice {
                 tts::say(c.speak, s, c.ep);
             }
@@ -495,7 +521,7 @@ fn chat(c: &Ctx, history: &[Value], ctx: &Context) -> Res<String> {
 /// so "3.5" survives and a mark at the end of the buffer waits for more tokens.
 /// `eager` also cuts at a comma after 12+ chars: TTS runs faster than real time, so only the
 /// first chunk's length matters for time-to-first-audio.
-fn take_sentence(buf: &mut String, eager: bool) -> Option<String> {
+pub(crate) fn take_sentence(buf: &mut String, eager: bool) -> Option<String> {
     let mut chars = buf.char_indices().peekable();
     while let Some((i, c)) = chars.next() {
         let stop = ".!?".contains(c) || (eager && i >= 12 && ",;:".contains(c));
@@ -597,5 +623,59 @@ mod tests {
         let answer = v["message"]["content"].as_str().unwrap_or("");
         println!("answer in {:?} (sources {sources:?}):\n{answer}", t1.elapsed());
         assert!(answer.to_lowercase().contains("deadlock") || answer.to_lowercase().contains("safe"), "{answer}");
+    }
+
+    /// Where a spoken turn's time goes after the words are known. Run with SUNDAY_BENCH=1 --nocapture.
+    #[test]
+    fn bench_reply_path() {
+        if std::env::var("SUNDAY_BENCH").is_err() {
+            return;
+        }
+        let ms = |t: std::time::Instant| t.elapsed().as_secs_f32() * 1000.0;
+        let db = Db::open(&std::env::temp_dir().join(format!("sunday-bench-{}.db", std::process::id()))).unwrap();
+        // 1500 facts with random 768-d embeddings, to time recall's own cost without needing Ollama for 1500 embeddings.
+        let mut x = 12345u64;
+        for i in 0..1500 {
+            let e: Vec<f32> = (0..768).map(|_| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; (x % 2000) as f32 / 1000.0 - 1.0 }).collect();
+            db.fact_add(&crate::db::NewFact { kind: "web", source: "https://x.dev", title: "x", text: &format!("fact number {i} about processes"), confidence: 0.9, event_date: "" }, Some(&e));
+        }
+        let t = std::time::Instant::now();
+        let _ = db.fact_embeddings();
+        println!("load 1500 embeddings from sqlite: {:.0} ms", ms(t));
+        let t = std::time::Instant::now();
+        let _ = db.search("how does the scheduler pick processes", 3);
+        println!("notes search (FTS): {:.1} ms", ms(t));
+
+        for round in ["cold or warm", "warm"] {
+            let t = std::time::Instant::now();
+            let r = crate::memory::embed(&["when is my exam".to_string()], true);
+            println!("embed one query ({round}): {:.0} ms ok={}", ms(t), r.is_ok());
+        }
+        let t = std::time::Instant::now();
+        let _ = crate::memory::recall(&db, "when is my exam", 4);
+        println!("recall over 1500 facts (embed + scan): {:.0} ms", ms(t));
+
+        // Chat: time to the first token and to the first full sentence, with the real tutor prompt and some history.
+        let model = model_name(&db);
+        let history = vec![json!({"role": "system", "content": study::TUTOR}), json!({"role": "user", "content": "what is a deadlock"}),
+            json!({"role": "assistant", "content": "A deadlock is when processes wait on each other forever. Want to try a question?"}), json!({"role": "user", "content": "explain how the banker's algorithm avoids it"})];
+        for round in ["first", "second"] {
+            let body = json!({"model": model, "messages": history, "stream": true, "think": false, "keep_alive": "30m"});
+            let t = std::time::Instant::now();
+            let resp = ureq::post(URL).send_json(body).unwrap();
+            let (mut first, mut sentence, mut text, mut tokens) = (None, None, String::new(), 0);
+            for line in BufReader::new(resp.into_reader()).lines() {
+                let v: Value = serde_json::from_str(&line.unwrap()).unwrap();
+                if let Some(tok) = v["message"]["content"].as_str().filter(|t| !t.is_empty()) {
+                    first.get_or_insert(ms(t));
+                    text.push_str(tok);
+                    tokens += 1;
+                    if sentence.is_none() && take_sentence(&mut text.clone(), true).is_some() {
+                        sentence = Some(ms(t));
+                    }
+                }
+            }
+            println!("chat ({round}): first token {:.0} ms, first sentence {:.0} ms, total {:.0} ms, {tokens} chunks", first.unwrap_or(0.0), sentence.unwrap_or(0.0), ms(t));
+        }
     }
 }

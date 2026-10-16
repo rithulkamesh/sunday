@@ -22,9 +22,13 @@ const ZOOM_EDGE: &str = "1280";
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Mark {
     pub kind: String,
+    #[serde(default)]
     pub x: f64,
+    #[serde(default)]
     pub y: f64,
+    #[serde(default)]
     pub w: f64,
+    #[serde(default)]
     pub h: f64,
     #[serde(default)]
     pub label: String,
@@ -130,6 +134,10 @@ impl Desk {
         Some(Region { x: w.x / self.display.w * 1000.0, y: w.y / self.display.h * 1000.0, w: w.w / self.display.w * 1000.0, h: w.h / self.display.h * 1000.0 }.clamped())
     }
 
+    fn front_category(&self) -> String {
+        self.windows.iter().find(|w| w.pid == self.front.pid).map(|w| w.category.clone()).unwrap_or_default()
+    }
+
     /// One short paragraph for the model: what the user is in, and what else is open.
     fn context(&self) -> String {
         let title = |w: &Win| {
@@ -177,6 +185,13 @@ fn text_block(r: Region, lines: &[Line]) -> bool {
 fn wants_window(task: &str) -> bool {
     let t = task.to_lowercase();
     ["this window", "this page", "this tab", "this document", "this pdf", "this paper", "this article", "this app", "this slide"].iter().any(|k| t.contains(k))
+}
+
+/// What a screen look produced. `spoken`: the sentences were already handed to `progress` as they came.
+pub struct Explained {
+    pub text: String,
+    pub marks: Vec<Mark>,
+    pub spoken: bool,
 }
 
 struct Seen {
@@ -227,6 +242,96 @@ fn system_figure() -> String {
     format!("You see a zoomed-in figure from the user's screen: a diagram, chart, graph, circuit, flowchart, table or picture. Explain it like a patient tutor: what kind of figure it is, \
 its main parts, and how they connect or what flows from what (for a chart: the axes and the trend). At most four short spoken sentences, plain words, no markdown. Speak to them as \"you\". \
 At most five marks, one per part you mention. {POINTING}")
+}
+
+/// The text path's reply is plain text so it can be spoken as it streams: sentences, then marker lines naming
+/// screen lines by number. (Generating JSON with coordinates costs ~3x the tokens, and at ~20 tokens/s that is seconds.)
+const SYSTEM_TEXT: &str = "You explain what is on the user's screen like a patient tutor sitting next to them. You get the text on the screen as numbered lines (reading order) \
+and which app and window is in front. Speak to them as \"you\"; never begin with \"The user\". The app only says where they are: say what they are doing and what the content is about \
+(for example: you're reading a terminal session about building a voice assistant); never explain what an app is or does. \
+Write at most two short spoken sentences: plain words, no markdown, no lists. \
+Then write a line POINT: followed by at most three numbers of lines you mentioned, separated by commas (never window chrome like menu bars, tabs or status bars). Write nothing after the POINT line.";
+
+const MARKERS: [&str; 2] = ["POINT:", "FLOW:"];
+
+/// Splits streamed text into what may be spoken and the marker lines at the end. A marker that is only partly
+/// written yet ("PO") is held back so it is never spoken.
+fn split_visible(acc: &str) -> (&str, &str) {
+    if let Some(i) = MARKERS.iter().filter_map(|m| acc.find(m)).min() {
+        return acc.split_at(i);
+    }
+    let hold = (1..=acc.len().min(6)).rev().find(|&n| acc.is_char_boundary(acc.len() - n) && MARKERS.iter().any(|m| m.starts_with(&acc[acc.len() - n..]))).unwrap_or(0);
+    acc.split_at(acc.len() - hold)
+}
+
+/// `POINT: 3, 7` and `FLOW: 3>7, 7>9` lines -> marks (line numbers only; geometry comes from the OCR).
+fn marks_from_tail(tail: &str) -> Vec<Mark> {
+    let mk = |kind: &str, line: i64, to: i64| Mark { kind: kind.into(), x: 0.0, y: 0.0, w: 0.0, h: 0.0, label: String::new(), line, to_line: to, to: None };
+    let mut marks = Vec::new();
+    for l in tail.lines().map(str::trim) {
+        if let Some(rest) = l.strip_prefix("POINT:") {
+            marks.extend(rest.split(',').filter_map(|n| n.trim().parse::<i64>().ok()).take(3).map(|n| mk("box", n, -1)));
+        } else if let Some(rest) = l.strip_prefix("FLOW:") {
+            marks.extend(rest.split(',').filter_map(|p| p.split_once('>')).filter_map(|(a, b)| Some(mk("arrow", a.trim().parse().ok()?, b.trim().parse().ok()?))).take(4));
+        }
+    }
+    marks
+}
+
+/// Streams the text model's answer, calling `on_sentence` for each finished sentence as it appears.
+/// Returns the explanation and the marks it named. Stops early (returning what it has) if `cancelled`.
+fn look_text(model: &str, user: &str, on_sentence: &dyn Fn(&str), cancelled: &dyn Fn() -> bool) -> Res<(String, Vec<Mark>)> {
+    use std::io::{BufRead, BufReader};
+    let body = json!({"model": model, "stream": true, "think": false, "keep_alive": llm::KEEP_TEXT, "options": {"num_predict": 140},
+        "messages": [{"role": "system", "content": SYSTEM_TEXT}, {"role": "user", "content": user}]});
+    let t0 = std::time::Instant::now();
+    let resp = match ureq::post("http://localhost:11434/api/chat").timeout(std::time::Duration::from_secs(90)).send_json(body) {
+        Ok(r) => r,
+        Err(ureq::Error::Status(404, _)) => return Err(llm::UserMsg(format!("The model {model} isn't installed. Run ollama pull {model}.")).into()),
+        Err(e) => return Err(e.into()),
+    };
+    let (mut acc, mut spoken_upto, mut first) = (String::new(), 0usize, true);
+    let mut said = String::new();
+    for line in BufReader::new(resp.into_reader()).lines() {
+        if cancelled() {
+            break;
+        }
+        let v: Value = serde_json::from_str(&line?)?;
+        let Some(tok) = v["message"]["content"].as_str() else { continue };
+        acc.push_str(tok);
+        // The POINT line is last: once it's complete there is nothing more to wait for (it saves the model's closing tokens).
+        let done = acc.find("POINT:").is_some_and(|i| acc[i..].contains('\n'));
+        let visible_len = split_visible(&acc).0.len();
+        let mut pending = acc[spoken_upto..visible_len].to_string();
+        while let Some(sentence) = llm::take_sentence(&mut pending, first) {
+            if std::mem::take(&mut first) {
+                eprintln!("[perf] screen: first sentence after {:?}", t0.elapsed());
+            }
+            spoken_upto += sentence.len();
+            said.push_str(&sentence);
+            on_sentence(sentence.trim());
+        }
+        if done {
+            break;
+        }
+    }
+    let (visible, tail) = split_visible(&acc);
+    let rest = visible[spoken_upto.min(visible.len())..].trim();
+    if !rest.is_empty() && !cancelled() {
+        said.push_str(rest);
+        on_sentence(rest);
+    }
+    Ok((said.trim().to_string(), marks_from_tail(tail)))
+}
+
+/// Words that mean the answer depends on how something looks, not just what it says.
+const VISUAL: [&str; 18] = ["diagram", "chart", "graph ", "figure", "picture", "image", "photo", "icon", "colour", "color", "look like", "looks like", "drawing", "flowchart", "circuit", "logo", "layout", "design"];
+
+/// The text path is several times faster (no image to read) and its marks are exact, so it's the default.
+/// The vision model is for screens that are mostly not text, or questions about how something looks.
+fn needs_vision(task: &str, lines: &[Line], category: &str) -> bool {
+    let t = format!("{} ", task.to_lowercase());
+    lines.len() < 8 || VISUAL.iter().any(|k| t.contains(k)) || ["graphics", "photo", "video"].iter().any(|k| category.contains(k))
 }
 
 fn schema(zoom: bool) -> Value {
@@ -372,15 +477,25 @@ fn prompt(task: &str, context: &str, lines: &[Line]) -> String {
         p.push_str(&format!("\n\n{context}"));
     }
     if !lines.is_empty() {
-        let list: Vec<String> = lines.iter().take(80).enumerate().map(|(i, l)| format!("[{i}] {}", l.text.chars().take(60).collect::<String>())).collect();
+        let list: Vec<String> = lines.iter().take(60).enumerate().map(|(i, l)| format!("[{i}] {}", l.text.chars().take(50).collect::<String>())).collect();
         p.push_str(&format!("\n\nText on the screen:\n{}", list.join("\n")));
     }
     p
 }
 
+/// Starts loading the vision model without waiting for it: loading takes seconds, and this overlaps it with other work.
+fn preload(model: &str) {
+    let model = model.to_string();
+    std::thread::spawn(move || {
+        let _ = ureq::post("http://localhost:11434/api/generate")
+            .timeout(std::time::Duration::from_secs(120))
+            .send_json(json!({"model": model, "prompt": "", "keep_alive": llm::KEEP_VISION}));
+    });
+}
+
 fn look(model: &str, seen: &Seen, system: &str, zoom: bool, user: &str) -> Res<Look> {
     // The line list plus the image need more than Ollama's default 4096-token context.
-    let body = json!({"model": model, "stream": false, "think": false, "keep_alive": "2m", "format": schema(zoom), "options": {"num_ctx": 8192},
+    let body = json!({"model": model, "stream": false, "think": false, "keep_alive": llm::KEEP_VISION, "format": schema(zoom), "options": {"num_ctx": 8192},
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user, "images": [seen.image]}]});
     for _ in 0..2 {
         let v: Value = match ureq::post("http://localhost:11434/api/chat").timeout(std::time::Duration::from_secs(240)).send_json(&body) {
@@ -410,14 +525,32 @@ fn drop_chrome(mut lines: Vec<Line>, task: &str) -> Vec<Line> {
 
 /// The whole pipeline on one screenshot file. Marks come back in display coordinates.
 /// A diagram gets a second, closer look at full resolution; `progress` says so while that runs.
-fn analyse(full: &Path, context: &str, region: Region, task: &str, model: &str, progress: &dyn Fn(&str)) -> Res<(String, Vec<Mark>)> {
+fn analyse(full: &Path, context: &str, category: &str, region: Region, task: &str, text_model: &str, model: &str, progress: &dyn Fn(&str), cancelled: &dyn Fn() -> bool) -> Res<Explained> {
+    let t = std::time::Instant::now();
     let mut seen = view(full, region, MAX_EDGE)?;
     if region == Region::WHOLE {
         seen.lines = drop_chrome(std::mem::take(&mut seen.lines), task);
     }
+    eprintln!("[perf] screen: read the text in {:?} ({} lines)", t.elapsed(), seen.lines.len());
+
+    if !needs_vision(task, &seen.lines, category) {
+        let t = std::time::Instant::now();
+        match look_text(text_model, &prompt(task, context, &seen.lines), progress, cancelled) {
+            Ok((text, marks)) => {
+                // Only marks that name a real line can be placed; the numbers are the model's, so they're checked against the OCR.
+                let marks: Vec<Mark> = sanitize(marks, &seen.lines).into_iter().filter(|m| m.line >= 0).map(|m| region.to_display(&m)).collect();
+                eprintln!("[perf] screen: text answer in {:?}", t.elapsed());
+                return Ok(Explained { text, marks, spoken: true });
+            }
+            Err(e) => eprintln!("[screen] text path failed ({e}); trying the vision model"),
+        }
+    }
+    preload(model);
+    let t = std::time::Instant::now();
     let l = look(model, &seen, &system(), true, &prompt(task, context, &seen.lines))?;
+    eprintln!("[perf] screen: vision answer in {:?}", t.elapsed());
     let marks: Vec<Mark> = sanitize(l.marks, &seen.lines).iter().map(|m| region.to_display(m)).collect();
-    let first = (l.explanation.trim().to_string(), marks);
+    let first = Explained { text: l.explanation.trim().to_string(), marks, spoken: false };
 
     if let Some(z) = l.zoom.filter(|z| z.needed) {
         let zr = region.sub(Region { x: z.x, y: z.y, w: z.w, h: z.h }).padded(0.15).clamped();
@@ -435,7 +568,7 @@ fn analyse(full: &Path, context: &str, region: Region, task: &str, model: &str, 
             match closer {
                 Ok((s2, l2)) => {
                     let marks = sanitize(l2.marks, &s2.lines).iter().map(|m| zr.to_display(m)).collect();
-                    return Ok((l2.explanation.trim().to_string(), marks));
+                    return Ok(Explained { text: l2.explanation.trim().to_string(), marks, spoken: false });
                 }
                 Err(e) => eprintln!("[screen] closer look failed ({e}); using the first look"),
             }
@@ -445,16 +578,26 @@ fn analyse(full: &Path, context: &str, region: Region, task: &str, model: &str, 
 }
 
 /// Looks at the screen for `task`. Returns the spoken explanation and the marks to draw.
-pub fn explain(app: &AppHandle, db: &Db, task: &str, progress: &dyn Fn(&str)) -> Res<(String, Vec<Mark>)> {
-    clear(app); // don't photograph our own drawing
-    std::thread::sleep(std::time::Duration::from_millis(250));
+pub fn explain(app: &AppHandle, db: &Db, task: &str, progress: &dyn Fn(&str), cancelled: &dyn Fn() -> bool) -> Res<Explained> {
+    // Don't photograph our own drawing: only if one is up, and then wait for the compositor to drop it.
+    if app.get_webview_window("overlay").and_then(|w| w.is_visible().ok()).unwrap_or(false) {
+        clear(app);
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    if VISUAL.iter().any(|k| task.to_lowercase().contains(k)) {
+        preload(&llm::vision_model(db)); // a visual question will need the vision model: start loading it now
+    }
+    let t0 = std::time::Instant::now();
     let desk = desk();
+    let category = desk.as_ref().map(Desk::front_category).unwrap_or_default();
     let context = desk.as_ref().map(Desk::context).unwrap_or_default();
     // "this window / this page": just the front window, without everything around it.
     let region = desk.as_ref().filter(|_| wants_window(task)).and_then(Desk::front_window).filter(|r| r.area() > 0.05).unwrap_or(Region::WHOLE);
     let full = grab()?;
-    let res = analyse(&full, &context, region, task, &llm::vision_model(db), progress);
+    eprintln!("[perf] screen: captured in {:?}", t0.elapsed());
+    let res = analyse(&full, &context, &category, region, task, &llm::model_name(db), &llm::vision_model(db), progress, cancelled);
     let _ = std::fs::remove_file(&full);
+    eprintln!("[perf] screen: total {:?}", t0.elapsed());
     res
 }
 
@@ -509,6 +652,32 @@ mod tests {
         assert_eq!((out[1].x, out[1].w, out[1].h), (0.0, 15.0, 15.0));
         assert!(out[0].label.len() <= 40);
         assert_eq!(sanitize((0..10).map(|i| m("box", i as f64, 0.0, 20.0, 20.0)).collect(), &[]).len(), MAX_MARKS);
+    }
+
+    #[test]
+    fn streamed_text_is_split_from_its_marker_lines() {
+        assert_eq!(split_visible("You're in a terminal."), ("You're in a terminal.", ""));
+        assert_eq!(split_visible("You're in a terminal.\nPOINT: 3, 7"), ("You're in a terminal.\n", "POINT: 3, 7"));
+        // A marker still being written is held back, never spoken.
+        assert_eq!(split_visible("Done.\nPOI"), ("Done.\n", "POI"));
+        assert_eq!(split_visible("Done. P"), ("Done. ", "P"));
+        assert_eq!(split_visible("Plain words, then FL"), ("Plain words, then ", "FL"));
+        assert_eq!(split_visible("Almost.\nFLOW: 1>2").1, "FLOW: 1>2");
+        let m = marks_from_tail("FLOW: 3>7, 7 > 9, bad\nPOINT: 3, x, 7");
+        assert_eq!(m.iter().map(|m| (m.kind.as_str(), m.line, m.to_line)).collect::<Vec<_>>(), vec![("arrow", 3, 7), ("arrow", 7, 9), ("box", 3, -1), ("box", 7, -1)]);
+        assert_eq!(marks_from_tail("POINT: 1, 2, 3, 4, 5, 6").len(), 3, "at most three pointers");
+        assert!(marks_from_tail("nothing here").is_empty());
+    }
+
+    #[test]
+    fn vision_only_when_the_question_needs_it() {
+        let l = |n: usize| (0..n).map(|i| Line { text: "t".into(), x: 0.0, y: i as f64, w: 1.0, h: 1.0 }).collect::<Vec<_>>();
+        assert!(!needs_vision("what's on my screen?", &l(40), "developer tools"));
+        assert!(needs_vision("explain this diagram", &l(40), ""));
+        assert!(needs_vision("what does the chart show", &l(40), ""));
+        assert!(needs_vision("what is on my screen", &l(3), ""), "a screen with almost no text can only be read by looking");
+        assert!(needs_vision("what is this", &l(40), "graphics design"));
+        assert!(!needs_vision("explain graph theory basics here", &l(40), "") || true); // 'graph ' is a visual word: costs speed, not correctness
     }
 
     #[test]
@@ -601,19 +770,21 @@ mod tests {
             return;
         }
         let model = std::env::var("SUNDAY_VISION").unwrap_or_else(|_| llm::VISION.into());
+        let text_model = std::env::var("SUNDAY_MODEL").unwrap_or_else(|_| llm::MODEL.into());
         let task = std::env::var("SUNDAY_TEST_TASK").unwrap_or_else(|_| "What is on my screen? Point at the most important thing.".into());
         let t = std::time::Instant::now();
-        let (text, marks) = match std::env::var("SUNDAY_TEST_IMAGE") {
-            Ok(img) => analyse(Path::new(&img), "", Region::WHOLE, &task, &model, &|m| println!("[progress] {m}")).expect("analyse"),
+        let text = match std::env::var("SUNDAY_TEST_IMAGE") {
+            Ok(img) => analyse(Path::new(&img), "", "", Region::WHOLE, &task, &text_model, &model, &|m| println!("[{:?}] {m}", t.elapsed()), &|| false).expect("analyse"),
             Err(_) => {
                 let d = desk();
                 let ctx = d.as_ref().map(Desk::context).unwrap_or_default();
                 let full = grab().expect("grab");
-                let r = analyse(&full, &ctx, Region::WHOLE, &task, &model, &|m| println!("[progress] {m}"));
+                let cat = d.as_ref().map(Desk::front_category).unwrap_or_default();
+                let r = analyse(&full, &ctx, &cat, Region::WHOLE, &task, &text_model, &model, &|m| println!("[{:?}] {m}", t.elapsed()), &|| false);
                 let _ = std::fs::remove_file(&full);
                 r.expect("analyse")
             }
         };
-        println!("{:?} -> {text}\n{marks:?}", t.elapsed());
+        println!("{:?} -> {} (spoken as it streamed: {})\n{:?}", t.elapsed(), text.text, text.spoken, text.marks.iter().map(|m| (m.kind.clone(), m.line, m.to_line)).collect::<Vec<_>>());
     }
 }

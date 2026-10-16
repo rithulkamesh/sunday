@@ -16,6 +16,7 @@ const IDLE: Duration = Duration::from_secs(10);
 const KWS: &str = "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01";
 // BPE pieces from the model's bpe.model; @name is what the spotter reports.
 const KEYWORDS: &str = "▁SU N DAY @sunday\n▁ST O P @stop\n";
+const THREADS: i32 = 4;
 const PARAKEET: &str = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8";
 
 /// Each speech event carries a similarity to the owner's voiceprint (None: not enrolled, or too little audio to tell).
@@ -53,6 +54,10 @@ fn load_kws() -> Option<KeywordSpotter> {
 }
 
 fn load_recognizer() -> Option<OfflineRecognizer> {
+    load_recognizer_with(THREADS)
+}
+
+fn load_recognizer_with(threads: i32) -> Option<OfflineRecognizer> {
     let t0 = Instant::now();
     let mut asr = OfflineRecognizerConfig::default();
     let t = &mut asr.model_config;
@@ -61,7 +66,7 @@ fn load_recognizer() -> Option<OfflineRecognizer> {
     t.transducer.joiner = Some(path(&format!("{PARAKEET}/joiner.int8.onnx")));
     t.tokens = Some(path(&format!("{PARAKEET}/tokens.txt")));
     t.model_type = Some("nemo_transducer".into());
-    t.num_threads = 4;
+    t.num_threads = threads;
 
     let r = OfflineRecognizer::create(&asr);
     eprintln!("[stt] model loaded in {:?}", t0.elapsed());
@@ -84,9 +89,12 @@ pub struct Stt {
     recent: Vec<f32>,
     /// Speech collected for a voiceprint while enrolling.
     enrolling: Option<Vec<f32>>,
-    /// Similarity for the utterance in progress, and the buffer length it was computed at.
+    /// Similarity for the utterance in progress (judged once, early: it doesn't change with more words).
     utt_sim: Option<f32>,
-    sim_at: usize,
+    /// Samples of speech to wait before the next live decode. A decode costs ~0.09 s per second of
+    /// audio *so far*, so the gap grows with it: live words must never use more than ~40% of real time,
+    /// or the backlog grows for as long as you keep talking.
+    interim_gap: usize,
     voice_vad: VoiceActivityDetector,
     muted_rest: Vec<f32>, // samples not yet a full VAD window
     was_muted: bool,
@@ -131,7 +139,7 @@ impl Stt {
             recent: Vec::new(),
             enrolling: None,
             utt_sim: None,
-            sim_at: 0,
+            interim_gap: INTERIM_EVERY,
             // Quicker to react; only used while muted, to tell voices from claps.
             voice_vad: VoiceActivityDetector::create(&vad_cfg(0.2, 0.1, 20.0), 5.0)?,
             muted_rest: Vec::new(),
@@ -297,7 +305,7 @@ impl Stt {
             self.speaking = true;
             self.since_interim = 0;
             self.utt_sim = None;
-            self.sim_at = 0;
+            self.interim_gap = INTERIM_EVERY;
         }
         if self.enrolling.is_some() {
             return self.enroll_step(out);
@@ -309,12 +317,14 @@ impl Stt {
         }
 
         // Live words while the utterance is still going.
-        if let (true, Some(rec)) = (self.speaking && self.since_interim >= INTERIM_EVERY, &self.recognizer) {
+        if let (true, Some(rec)) = (self.speaking && self.since_interim >= self.interim_gap, &self.recognizer) {
+            let t = Instant::now();
             let text = decode(rec, &self.buf);
-            // Whose voice is it so far? Re-judged as the utterance grows (needs ~0.75 s, uses the last 4 s).
-            if self.print.is_some() && self.buf.len() >= self.sim_at + 8_000 {
-                self.utt_sim = self.sim_of(&self.buf[self.buf.len().saturating_sub(4 * 16_000)..]);
-                self.sim_at = self.buf.len();
+            // Next live decode waits long enough that decoding stays at ~40% of real time.
+            self.interim_gap = ((t.elapsed().as_secs_f32() * 2.5 * 16_000.0) as usize).max(INTERIM_EVERY);
+            // Whose voice is it? Judged once, from the last 3 s, as soon as there's enough to go on.
+            if self.print.is_some() && self.utt_sim.is_none() && self.buf.len() >= 24_000 {
+                self.utt_sim = self.sim_of(&self.buf[self.buf.len().saturating_sub(3 * 16_000)..]);
             }
             if !text.is_empty() {
                 out.push(Heard::Interim(text, self.utt_sim));
@@ -328,7 +338,8 @@ impl Stt {
             if let Some(seg) = self.vad.front() {
                 let text = self.recognizer.as_ref().map(|r| decode(r, seg.samples())).unwrap_or_default();
                 if !text.is_empty() {
-                    let sim = self.sim_of(&seg.samples());
+                    let all = seg.samples();
+                    let sim = self.sim_of(&all[all.len().saturating_sub(3 * 16_000)..]); // 3 s is plenty and ~2x cheaper
                     out.push(Heard::Final(text, sim));
                 }
             }
@@ -477,5 +488,69 @@ mod tests {
         let own = own.expect("no sim for the owner");
         assert!(own >= speaker::SAME && woke, "the owner should wake it");
         assert!(other.is_none_or(|o| o < own), "another voice scored at least as high as the owner");
+    }
+
+    /// Timing of each speech stage against real time. Run with SUNDAY_BENCH=1 --nocapture.
+    #[test]
+    fn bench_speech_pipeline() {
+        if std::env::var("SUNDAY_BENCH").is_err() {
+            return;
+        }
+        let tts = crate::tts::Speaker::new().expect("tts unavailable");
+        let rs = sherpa_onnx::LinearResampler::create(24_000, 16_000).unwrap();
+        let said = "The scheduler picks the next process from the ready queue and gives it the processor for a short time slice, and when the slice ends the process goes back to the queue. \
+            Dynamic programming stores the answers to small subproblems so that each one is only computed once, which turns an exponential search into a polynomial one. \
+            A binary search tree keeps its keys in order so lookups follow a single path from the root down to a leaf, and balanced variants keep that path short.";
+        let audio = rs.resample(&tts.synth(said), true);
+        println!("test audio: {:.1}s", audio.len() as f32 / 16_000.0);
+
+        for threads in [2, 4, 6, 8] {
+            let rec = load_recognizer_with(threads).expect("parakeet");
+            let _ = decode(&rec, &audio[..16_000]); // warm up
+            let t = Instant::now();
+            let _ = decode(&rec, &audio[..10 * 16_000]);
+            println!("parakeet, {threads} threads: 10 s of audio in {:.0} ms", t.elapsed().as_secs_f32() * 1000.0);
+        }
+        let rec = load_recognizer().expect("parakeet");
+        for secs in [2usize, 5, 10, 20] {
+            let n = (secs * 16_000).min(audio.len());
+            let t = Instant::now();
+            let text = decode(&rec, &audio[..n]);
+            println!("parakeet decode of {:>4.1}s audio: {:>5.0} ms  ({} chars)", n as f32 / 16_000.0, t.elapsed().as_secs_f32() * 1000.0, text.len());
+        }
+        let voice = Voice::new().expect("speaker model");
+        for secs in [1usize, 2, 4] {
+            let t = Instant::now();
+            let _ = voice.embed(&audio[..secs * 16_000]);
+            println!("speaker embedding of {secs}s audio: {:>5.0} ms", t.elapsed().as_secs_f32() * 1000.0);
+        }
+
+        // The real question: does push() keep up with 100 ms chunks while someone talks (model loaded, voiceprint set)?
+        let mut stt = Stt::new().expect("models");
+        stt.warm();
+        stt.set_voiceprint(voice.embed(&audio[..8 * 16_000]));
+        let mut lead = vec![0.0f32; 16_000];
+        lead.extend(audio.iter().copied());
+        lead.extend(vec![0.0f32; 24_000]);
+        let (mut worst, mut total, mut n, mut over) = (0.0f32, 0.0f32, 0, 0);
+        let mut first_final = None;
+        let start = Instant::now();
+        for (i, c) in lead.chunks(1600).enumerate() {
+            let t = Instant::now();
+            let heard = stt.push(c, false);
+            let ms = t.elapsed().as_secs_f32() * 1000.0;
+            if heard.iter().any(|h| matches!(h, Heard::Final(..))) && first_final.is_none() {
+                first_final = Some((i, start.elapsed()));
+            }
+            worst = worst.max(ms);
+            total += ms;
+            n += 1;
+            over += usize::from(ms > 100.0);
+            if i % 40 == 0 {
+                println!("  chunk {i:>3} ({:>4.1}s in): push took {ms:>5.0} ms", i as f32 * 0.1);
+            }
+        }
+        println!("push per 100 ms chunk: avg {:.0} ms, worst {:.0} ms, {over} of {n} chunks slower than real time", total / n as f32, worst);
+        println!("audio ends at chunk {}; final arrived at {:?}", (16_000 + audio.len()) / 1600, first_final);
     }
 }

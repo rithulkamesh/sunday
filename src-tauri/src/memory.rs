@@ -28,7 +28,7 @@ pub fn embed(texts: &[String], query: bool) -> Res<Vec<Vec<f32>>> {
     let input: Vec<String> = texts.iter().map(|t| format!("{prefix}{t}")).collect();
     let v: Value = ureq::post("http://localhost:11434/api/embed")
         .timeout(std::time::Duration::from_secs(60))
-        .send_json(json!({"model": embed_model(), "input": input, "keep_alive": "10m"}))?
+        .send_json(json!({"model": embed_model(), "input": input, "keep_alive": crate::llm::KEEP_TEXT}))?
         .into_json()?;
     let out: Vec<Vec<f32>> = v["embeddings"]
         .as_array()
