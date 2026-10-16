@@ -250,10 +250,15 @@ fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
 }
 
 /// Runs one stretch of the agent loop and speaks where it ended: the result, or the question it needs a yes to.
-fn act(c: &Ctx, run: impl FnOnce(&dyn Fn(&crate::agent::State) -> Res<crate::agent::Step>, &dyn Fn(&str) -> Result<String, String>) -> Res<crate::agent::Out>) -> Res<String> {
+fn act(c: &Ctx, run: impl FnOnce(&dyn Fn(&crate::agent::State) -> Res<crate::agent::Step>, &crate::agent::Eyes) -> Res<crate::agent::Out>) -> Res<String> {
     let plan = crate::agent::model_plan(c.model);
     let look = |t: &str| crate::screen::explain(&c.hud.app, c.db, t, &|_| {}, &|| tts::epoch() != c.ep).map(|r| r.text).map_err(|e| e.to_string());
-    Ok(match run(&plan, &look)? {
+    let locate = |t: &str| {
+        let (x, y) = crate::screen::locate(c.db, t).map_err(|e| e.to_string())?;
+        crate::screen::preview(&c.hud.app, x, y, t);
+        Ok((x, y))
+    };
+    Ok(match run(&plan, &crate::agent::Eyes { look: &look, locate: &locate })? {
         crate::agent::Out::Done(t) | crate::agent::Out::Ask(t) => say(c, &t),
     })
 }

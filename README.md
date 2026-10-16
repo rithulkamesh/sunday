@@ -7,7 +7,7 @@ almost anything, looks at your screen and points at things, reads the web, and r
 Silero VAD + a wake-word spotter + Parakeet (speech in), Ollama (thinking), Kokoro (speech out), SQLite (memory).
 
 Honest status: *Sees* (screen, diagrams), *Understands* (teaching, notes), *Notices* (memory, voice) and *Decides* (typed actions, rules router) exist today.
-*Acts* has started: opening apps, pages and files and typing, with approvals; clicking and multi-app workflows are next. The long-term goal is a general agent that gets more capable the more it's used.
+*Acts* has started: opening apps, pages and files and typing, with approvals; clicking (with a ring preview and a yes) works; multi-app workflows are next. The long-term goal is a general agent that gets more capable the more it's used.
 
 ## Run
 

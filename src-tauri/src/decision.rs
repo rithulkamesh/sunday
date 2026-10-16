@@ -124,12 +124,18 @@ impl Decider for Rules {
 fn computer_task(text: &str) -> Option<String> {
     let t = text.trim().trim_end_matches(['.', '!', '?']);
     let mut rest = t.to_lowercase();
+    // "Sandey, can you open..." — the wake word is often misheard; a short first word before a comma is addressing, not content.
+    if let Some((first, after)) = rest.split_once(", ") {
+        if !first.contains(' ') && first.len() <= 8 {
+            rest = after.to_string();
+        }
+    }
     for lead in ["sunday ", "please ", "can you ", "could you ", "would you ", "i want you to ", "go ahead and "] {
         while let Some(r) = rest.strip_prefix(lead) {
             rest = r.to_string();
         }
     }
-    ["open ", "launch ", "go to ", "type ", "navigate to ", "pull up ", "bring up "].iter().any(|v| rest.starts_with(v)).then(|| t.to_string())
+    ["open ", "click ", "select ", "launch ", "go to ", "type ", "navigate to ", "pull up ", "bring up "].iter().any(|v| rest.starts_with(v)).then(|| t.to_string())
 }
 
 /// Refuses actions that can't run right now; the caller falls back to `Chat` with an explanation.
@@ -207,6 +213,8 @@ mod tests {
         assert_eq!(d("Can you open Safari?", false), Do("Can you open Safari".into()));
         assert_eq!(d("open question: what is a mutex", false), Do("open question: what is a mutex".into())); // ponytail: verb rule, the model's plan will just finish
         assert_eq!(d("what does open mean", false), Chat);
+        assert!(matches!(d("Sandey, can you open one with three colours?", false), Do(_)));
+        assert!(matches!(d("click on the blue one", false), Do(_)));
         assert_eq!(d("Sunday, remember that my driving test is on 8 February.", false), Remember("my driving test is on 8 February".into()));
         assert_eq!(d("learn this page", false), LearnPage(None));
         assert_eq!(d("explain this page", false), Screen("explain this page".into())); // looking at it is not saving it

@@ -405,6 +405,45 @@ pub fn open_apps() -> Vec<String> {
     v
 }
 
+/// Where on the main display (0..1000 each way) is `target`? A line of on-screen text that contains it gives an exact
+/// answer; otherwise the vision model's best point (rough: the caller shows it and asks before clicking).
+pub fn locate(db: &Db, target: &str) -> Res<(f64, f64)> {
+    let full = grab()?;
+    let found = (|| -> Res<(f64, f64)> {
+        let seen = view(&full, Region::WHOLE, MAX_EDGE)?;
+        let t = target.trim().to_lowercase();
+        if let Some(l) = seen.lines.iter().find(|l| l.text.to_lowercase().contains(&t)) {
+            return Ok((l.x + l.w / 2.0, l.y + l.h / 2.0));
+        }
+        let model = llm::vision_model(db);
+        let body = json!({"model": model, "stream": false, "think": false, "keep_alive": llm::KEEP_VISION, "options": {"num_ctx": 8192},
+            "format": {"type": "object", "required": ["found", "x", "y"], "properties": {"found": {"type": "boolean"}, "x": {"type": "number"}, "y": {"type": "number"}}},
+            "messages": [{"role": "system", "content": "You find things on a screenshot. Reply with the centre point (x, y, each 0 to 1000 from the top-left of the image) of the single item that best matches the description. If nothing visible matches, found is false."},
+                {"role": "user", "content": format!("Find: {target}"), "images": [seen.image]}]});
+        let v: Value = ureq::post("http://localhost:11434/api/chat").timeout(std::time::Duration::from_secs(120)).send_json(&body)?.into_json()?;
+        let p: Value = serde_json::from_str(v["message"]["content"].as_str().unwrap_or(""))?;
+        match (p["found"].as_bool(), p["x"].as_f64(), p["y"].as_f64()) {
+            (Some(true), Some(x), Some(y)) if (0.0..=1000.0).contains(&x) && (0.0..=1000.0).contains(&y) => Ok((x, y)),
+            _ => Err(llm::UserMsg(format!("I can't see {target} on the screen.")).into()),
+        }
+    })();
+    let _ = std::fs::remove_file(&full);
+    found
+}
+
+/// Left-click at a point of the main display (0..1000 each way).
+pub fn click(x: f64, y: f64) -> Result<(), String> {
+    let (d, t) = (desk().ok_or("I can't read the display.")?, tool().ok_or("the screen helper isn't built (run scripts/build-ocr.sh)")?);
+    let ok = std::process::Command::new(t).arg("--click").args([format!("{:.0}", x / 1000.0 * d.display.w), format!("{:.0}", y / 1000.0 * d.display.h)]).status().is_ok_and(|s| s.success());
+    if ok { Ok(()) } else { Err("the click failed; Sunday may need Accessibility permission".into()) }
+}
+
+/// A ring round a point, so the user sees what Sunday means before it clicks.
+pub fn preview(app: &AppHandle, x: f64, y: f64, label: &str) {
+    let m = Mark { kind: "circle".into(), x: x - 20.0, y: y - 20.0, w: 40.0, h: 40.0, label: label.chars().take(40).collect(), line: -1, to_line: -1, to: None };
+    show(app, &[m], 12);
+}
+
 fn desk() -> Option<Desk> {
     let out = std::process::Command::new(tool()?).arg("--windows").output().ok().filter(|o| o.status.success())?;
     serde_json::from_slice(&out.stdout).ok()

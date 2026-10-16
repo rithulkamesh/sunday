@@ -1,6 +1,7 @@
 // Screen helper for Sunday. Built by scripts/build-ocr.sh.
 //   ocr <image>                        text lines with exact boxes (Apple Vision): [{text, x, y, w, h}], 0..1000 of the image
 //   ocr --windows                      what's on the desktop: {display:{w,h}, front:{app,pid}, windows:[{app,title,x,y,w,h,pid}]}
+//   ocr --click x y                    left-click at x, y (points, main display); needs Accessibility
 //   ocr --crop <in> <out> x y w h      crop a region (0..1000 of the image) to a JPEG
 import AppKit
 import CoreGraphics
@@ -33,6 +34,16 @@ if CommandLine.arguments.count > 1 && CommandLine.arguments[1] == "--windows" {
                      "pid": w[kCGWindowOwnerPID as String] as? Int ?? 0])
     }
     json(["display": ["w": disp.width, "h": disp.height], "front": ["app": front?.localizedName ?? "", "pid": Int(front?.processIdentifier ?? 0)], "windows": wins])
+    exit(0)
+}
+
+if CommandLine.arguments.count == 4 && CommandLine.arguments[1] == "--click" {
+    guard let x = Double(CommandLine.arguments[2]), let y = Double(CommandLine.arguments[3]) else { exit(1) }
+    let at = CGPoint(x: x, y: y)
+    for t in [CGEventType.leftMouseDown, .leftMouseUp] {
+        CGEvent(mouseEventSource: nil, mouseType: t, mouseCursorPosition: at, mouseButton: .left)?.post(tap: .cghidEventTap)
+        usleep(60_000)
+    }
     exit(0)
 }
 
