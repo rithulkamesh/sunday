@@ -195,7 +195,7 @@ fn listen(hud: Hud) {
                 } else {
                     barge.reset();
                 }
-                if fn_held || muted {
+                if fn_held || muted || tts::busy() {
                     s.warm(); // hold-to-talk, or mid-conversation: keep the model loaded
                 }
                 for heard in s.push(&chunk, muted) {
@@ -230,7 +230,7 @@ struct Tts(Mutex<std::sync::mpsc::Sender<tts::Cmd>>);
 #[cfg(feature = "voice")]
 #[tauri::command]
 fn speak(text: String, tts: tauri::State<Tts>) {
-    let _ = tts.0.lock().unwrap().send(tts::Cmd::Speak(text, tts::epoch()));
+    tts::say(&tts.0.lock().unwrap(), text, tts::epoch());
 }
 
 #[cfg(feature = "voice")]

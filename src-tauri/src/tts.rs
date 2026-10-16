@@ -5,7 +5,7 @@ use sherpa_onnx::{
     GenerationConfig, OfflineTts, OfflineTtsConfig, OfflineTtsKokoroModelConfig,
     OfflineTtsModelConfig,
 };
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -17,6 +17,33 @@ static PLAY_LEVEL: AtomicU32 = AtomicU32::new(0);
 
 pub fn playback_level() -> f32 {
     f32::from_bits(PLAY_LEVEL.load(Ordering::Relaxed))
+}
+
+/// Sentences handed to the speaker thread but not yet synthesized.
+static PENDING: AtomicU32 = AtomicU32::new(0);
+static REPLYING: AtomicBool = AtomicBool::new(false);
+
+/// Queue a sentence for the speaker thread.
+pub fn say(tx: &std::sync::mpsc::Sender<Cmd>, text: String, epoch: u64) {
+    PENDING.fetch_add(1, Ordering::SeqCst);
+    if tx.send(Cmd::Speak(text, epoch)).is_err() {
+        PENDING.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// llm.rs marks the whole reply (thinking, synthesis, playback) so idle timers wait for it.
+pub fn set_replying(on: bool) {
+    REPLYING.store(on, Ordering::SeqCst);
+}
+
+/// Sunday is still talking or about to: audio playing, or sentences still being synthesized.
+pub fn talking() -> bool {
+    PENDING.load(Ordering::SeqCst) > 0 || speaking()
+}
+
+/// Anything of Sunday's in flight, thinking included.
+pub fn busy() -> bool {
+    REPLYING.load(Ordering::SeqCst) || talking()
 }
 
 static EPOCH: AtomicU64 = AtomicU64::new(0);
@@ -147,6 +174,7 @@ pub fn spawn(app: tauri::AppHandle) -> std::sync::mpsc::Sender<Cmd> {
                     if speaker.speak(&t, epoch) {
                         let _ = tauri::Emitter::emit(&app, "say", t.trim());
                     }
+                    PENDING.fetch_sub(1, Ordering::SeqCst);
                 }
                 Cmd::Chime => speaker.chime(),
             }

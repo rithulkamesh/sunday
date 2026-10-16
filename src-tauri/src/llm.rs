@@ -22,6 +22,7 @@ pub fn spawn(hud: Hud, speak: Sender<Cmd>) -> Sender<String> {
         let mut history = vec![json!({"role": "system", "content": SYSTEM})];
         for q in rx {
             history.push(json!({"role": "user", "content": q}));
+            tts::set_replying(true);
             let ep = tts::epoch();
             let _ = hud.app.emit("state", "thinking");
             let _ = speak.send(Cmd::Chime);
@@ -48,10 +49,12 @@ pub fn spawn(hud: Hud, speak: Sender<Cmd>) -> Sender<String> {
             let excess = history.len().saturating_sub(KEEP + 1);
             history.drain(1..1 + excess);
             // Keep the HUD up until the last sentence has been spoken.
-            while tts::speaking() {
+            while tts::talking() {
                 hud.touch();
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
+            tts::set_replying(false);
+            hud.touch(); // the idle window runs from the end of Sunday's speech
             let _ = hud.app.emit("state", "listening");
         }
     });
@@ -76,14 +79,14 @@ fn chat(hud: &Hud, speak: &Sender<Cmd>, model: &str, history: &[Value], ep: u64)
         hud.touch();
         while let Some(s) = take_sentence(&mut pending, first) {
             first = false;
-            let _ = speak.send(Cmd::Speak(s, ep));
+            let _ = tts::say(speak, s, ep);
         }
     }
     if tts::epoch() != ep {
         return Ok(String::new());
     }
     if !pending.trim().is_empty() {
-        let _ = speak.send(Cmd::Speak(pending, ep));
+        let _ = tts::say(speak, pending, ep);
     }
     Ok(full.trim().to_string())
 }
