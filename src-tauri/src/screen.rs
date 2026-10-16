@@ -231,11 +231,12 @@ Only for things that are not text (pictures, diagram parts, icons) set `line` to
 fn system() -> String {
     format!("You see a screenshot of the user's screen and explain what they ask about, like a patient friend sitting next to them. Speak to them as \"you\"; never begin with \"The user\". \
 You are also told which app and window is in front and what else is open. That only says where they are: say what they are doing and what the content is about \
-(for example: you're reading a terminal session about building a voice assistant). Never explain what an app is or does, and never guess that from its name. \
+(for example: you're reading a terminal session about building a voice assistant). Never explain what an app is or does, and never guess that from its name. Window titles are only labels (a file name or size), not the content. \
+Cover the whole screen's main subject, not one corner of it: if it is a picture or diagram, say what it is about and how its parts relate. \
 `explanation` is at most three short spoken sentences: plain words, no markdown, and refer to things by what they say or look like. \
 At most four marks. Point at the content the user is working on, never at window chrome (menu bar, tabs, title bars, status bars, notifications) unless they ask. \
 If the screen has a diagram, chart, graph, figure, flowchart, circuit or other small detailed picture that needs a closer look to explain properly, set zoom.needed true and give its region \
-(0..1000 of the image, x,y top-left, w,h the size, slightly generous). Pages of text, code and terminals are not diagrams. Otherwise zoom.needed is false and x,y,w,h are 0. {POINTING}")
+(0..1000 of the image, x,y top-left, w,h the size, slightly generous). If the whole screen is one picture or diagram, zoom to all of it. Pages of text, code and terminals are not diagrams. Otherwise zoom.needed is false and x,y,w,h are 0. {POINTING}")
 }
 
 fn system_figure() -> String {
@@ -331,7 +332,9 @@ const VISUAL: [&str; 18] = ["diagram", "chart", "graph ", "figure", "picture", "
 /// The vision model is for screens that are mostly not text, or questions about how something looks.
 fn needs_vision(task: &str, lines: &[Line], category: &str) -> bool {
     let t = format!("{} ", task.to_lowercase());
-    lines.len() < 8 || VISUAL.iter().any(|k| t.contains(k)) || ["graphics", "photo", "video"].iter().any(|k| category.contains(k))
+    // Few, scattered text lines (labels in a picture) mean a figure; pages, code and terminals share a left edge.
+    let all: Vec<&Line> = lines.iter().collect();
+    lines.len() < 8 || (lines.len() < MAX_FIGURE_LINES && !left_aligned_block(&all)) || VISUAL.iter().any(|k| t.contains(k)) || ["graphics", "photo", "video"].iter().any(|k| category.contains(k))
 }
 
 fn schema(zoom: bool) -> Value {
@@ -677,6 +680,8 @@ mod tests {
         assert!(needs_vision("what does the chart show", &l(40), ""));
         assert!(needs_vision("what is on my screen", &l(3), ""), "a screen with almost no text can only be read by looking");
         assert!(needs_vision("what is this", &l(40), "graphics design"));
+        let scattered: Vec<Line> = (0..16).map(|i| Line { x: 37.0 * i as f64 % 900.0, y: 50.0 * i as f64, w: 90.0, h: 20.0, text: "x".into() }).collect();
+        assert!(needs_vision("what is on my screen", &scattered, ""), "scattered labels are a figure");
         assert!(!needs_vision("explain graph theory basics here", &l(40), "") || true); // 'graph ' is a visual word: costs speed, not correctness
     }
 
