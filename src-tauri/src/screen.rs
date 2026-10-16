@@ -97,6 +97,8 @@ impl Region {
 #[derive(Deserialize, Clone, Debug)]
 struct Win {
     app: String,
+    #[serde(default)]
+    category: String,
     title: String,
     x: f64,
     y: f64,
@@ -130,7 +132,16 @@ impl Desk {
 
     /// One short paragraph for the model: what the user is in, and what else is open.
     fn context(&self) -> String {
-        let title = |w: &Win| if w.title.trim().is_empty() { w.app.clone() } else { format!("{} (\"{}\")", w.app, w.title.chars().take(60).collect::<String>()) };
+        let title = |w: &Win| {
+            let mut facts = vec![];
+            if !w.category.is_empty() {
+                facts.push(format!("a {} app", w.category));
+            }
+            if !w.title.trim().is_empty() {
+                facts.push(format!("window \"{}\"", w.title.chars().take(60).collect::<String>()));
+            }
+            if facts.is_empty() { w.app.clone() } else { format!("{} ({})", w.app, facts.join(", ")) }
+        };
         let front = self.windows.iter().find(|w| w.pid == self.front.pid).map_or_else(|| self.front.app.clone(), title);
         let others: Vec<String> = self.windows.iter().filter(|w| w.pid != self.front.pid).take(6).map(title).collect();
         let mut s = format!("Desktop context. In front: {front}.");
@@ -139,6 +150,27 @@ impl Desk {
         }
         s
     }
+}
+
+/// A region this full of text is a page, not a figure.
+const MAX_FIGURE_LINES: usize = 30;
+
+/// Terminal output, code and prose share one left edge; a diagram's labels are scattered.
+/// True if at least half of 4+ lines start at the same x (within 2% of the width).
+fn left_aligned_block(lines: &[&Line]) -> bool {
+    if lines.len() < 4 {
+        return false;
+    }
+    let mut buckets = std::collections::HashMap::new();
+    for l in lines {
+        *buckets.entry((l.x / 20.0) as i64).or_insert(0usize) += 1;
+    }
+    buckets.values().max().copied().unwrap_or(0) * 2 >= lines.len()
+}
+
+fn text_block(r: Region, lines: &[Line]) -> bool {
+    let inside: Vec<&Line> = lines.iter().filter(|l| l.x + l.w / 2.0 >= r.x && l.x + l.w / 2.0 <= r.x + r.w && l.y + l.h / 2.0 >= r.y && l.y + l.h / 2.0 <= r.y + r.h).collect();
+    inside.len() > MAX_FIGURE_LINES || left_aligned_block(&inside)
 }
 
 /// "this window", "this page"...: look at the front window only, not the whole display.
@@ -183,11 +215,12 @@ Only for things that are not text (pictures, diagram parts, icons) set `line` to
 
 fn system() -> String {
     format!("You see a screenshot of the user's screen and explain what they ask about, like a patient tutor sitting next to them. Speak to them as \"you\"; never begin with \"The user\". \
-You are also told which app and window is in front and what else is open: use that to say what they are doing. \
+You are also told which app and window is in front and what else is open. That only says where they are: say what they are doing and what the content is about \
+(for example: you're reading a terminal session about building a voice assistant). Never explain what an app is or does, and never guess that from its name. \
 `explanation` is at most three short spoken sentences: plain words, no markdown, and refer to things by what they say or look like. \
 At most four marks. Point at the content the user is working on, never at window chrome (menu bar, tabs, title bars, status bars, notifications) unless they ask. \
 If the screen has a diagram, chart, graph, figure, flowchart, circuit or other small detailed picture that needs a closer look to explain properly, set zoom.needed true and give its region \
-(0..1000 of the image, x,y top-left, w,h the size, slightly generous) and keep `explanation` to one sentence about the whole screen, because a closer look follows. Otherwise zoom.needed is false and x,y,w,h are 0. {POINTING}")
+(0..1000 of the image, x,y top-left, w,h the size, slightly generous). Pages of text, code and terminals are not diagrams. Otherwise zoom.needed is false and x,y,w,h are 0. {POINTING}")
 }
 
 fn system_figure() -> String {
@@ -383,7 +416,12 @@ fn analyse(full: &Path, context: &str, region: Region, task: &str, model: &str, 
 
     if let Some(z) = l.zoom.filter(|z| z.needed) {
         let zr = region.sub(Region { x: z.x, y: z.y, w: z.w, h: z.h }).padded(0.15).clamped();
-        if (0.02..0.9).contains(&zr.area()) && tool().is_some() {
+        // Lines are relative to what was viewed; zoom coordinates likewise (before mapping to the display).
+        let crowded = text_block(Region { x: z.x, y: z.y, w: z.w, h: z.h }, &seen.lines);
+        if crowded {
+            eprintln!("[screen] zoom ignored: that region is mostly text, not a figure");
+        }
+        if !crowded && (0.02..0.9).contains(&zr.area()) && tool().is_some() {
             progress("That looks like a diagram. Let me look closer.");
             let closer = view(full, zr, ZOOM_EDGE).and_then(|s2| {
                 let user = prompt(&format!("{task} (Explain this figure in detail.)"), context, &s2.lines);
@@ -522,9 +560,22 @@ mod tests {
     }
 
     const DESK: &str = r#"{"display":{"w":1680,"h":1050},"front":{"app":"Preview","pid":7},"windows":[
-        {"app":"Preview","title":"os-notes.pdf","x":420,"y":30,"w":840,"h":1020,"pid":7},
-        {"app":"Ghostty","title":"build","x":0,"y":30,"w":1680,"h":1020,"pid":3},
+        {"app":"Preview","category":"productivity","title":"os-notes.pdf","x":420,"y":30,"w":840,"h":1020,"pid":7},
+        {"app":"Ghostty","category":"developer tools","title":"build","x":0,"y":30,"w":1680,"h":1020,"pid":3},
         {"app":"Spotify","title":"","x":0,"y":30,"w":1680,"h":1020,"pid":9}]}"#;
+
+    #[test]
+    fn text_blocks_are_not_figures() {
+        let l = |x: f64, y: f64| Line { text: "t".into(), x, y, w: 40.0, h: 10.0 };
+        let whole = Region::WHOLE;
+        // 60 lines: a page. 5 lines on one left edge: terminal output or code.
+        assert!(text_block(whole, &(0..60).map(|i| l(100.0 + (i % 7) as f64 * 90.0, i as f64 * 15.0)).collect::<Vec<_>>()));
+        assert!(text_block(whole, &(0..5).map(|i| l(100.0, 100.0 + i as f64 * 20.0)).collect::<Vec<_>>()));
+        // The architecture diagram's labels are scattered.
+        let diagram = [l(562.0, 160.0), l(540.0, 302.0), l(463.0, 466.0), l(642.0, 467.0), l(469.0, 634.0), l(639.0, 635.0)];
+        assert!(!text_block(whole, &diagram));
+        assert!(!text_block(whole, &diagram[..3]), "too few lines to call it text");
+    }
 
     #[test]
     fn knows_what_is_in_front() {
@@ -532,7 +583,8 @@ mod tests {
         let r = d.front_window().unwrap();
         assert_eq!((r.x, r.w), (250.0, 500.0)); // 420/1680, 840/1680
         let c = d.context();
-        assert!(c.contains("In front: Preview (\"os-notes.pdf\")") && c.contains("Ghostty (\"build\")") && c.contains("Spotify"), "{c}");
+        assert!(c.contains("In front: Preview (a productivity app, window \"os-notes.pdf\")") && c.contains("Ghostty (a developer tools app, window \"build\")") && c.contains("Spotify"), "{c}");
+        assert!(!c.contains("Spotify ("), "no facts, no parentheses: {c}");
         assert!(wants_window("explain this page") && wants_window("what is on this PDF") && !wants_window("what is on my screen"));
     }
 

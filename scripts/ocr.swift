@@ -22,7 +22,14 @@ if CommandLine.arguments.count > 1 && CommandLine.arguments[1] == "--windows" {
         else { continue }
         let app = w[kCGWindowOwnerName as String] as? String ?? ""
         if app.lowercased() == "sunday" { continue }  // our own HUD and overlay
-        wins.append(["app": app, "title": w[kCGWindowName as String] as? String ?? "", "x": r.minX, "y": r.minY, "w": r.width, "h": r.height,
+        let pid = w[kCGWindowOwnerPID as String] as? Int ?? 0
+        // What kind of app it really is (from its bundle), so the model never has to guess from the name.
+        var category = ""
+        if let url = NSRunningApplication(processIdentifier: pid_t(pid))?.bundleURL,
+           let c = Bundle(url: url)?.object(forInfoDictionaryKey: "LSApplicationCategoryType") as? String {
+            category = c.replacingOccurrences(of: "public.app-category.", with: "").replacingOccurrences(of: "-", with: " ")
+        }
+        wins.append(["app": app, "category": category, "title": w[kCGWindowName as String] as? String ?? "", "x": r.minX, "y": r.minY, "w": r.width, "h": r.height,
                      "pid": w[kCGWindowOwnerPID as String] as? Int ?? 0])
     }
     json(["display": ["w": disp.width, "h": disp.height], "front": ["app": front?.localizedName ?? "", "pid": Int(front?.processIdentifier ?? 0)], "windows": wins])
