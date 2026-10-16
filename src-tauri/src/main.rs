@@ -6,6 +6,12 @@ mod mic;
 #[cfg(feature = "voice")]
 mod db;
 #[cfg(feature = "voice")]
+mod decision;
+#[cfg(feature = "voice")]
+mod screen;
+#[cfg(feature = "voice")]
+mod skills;
+#[cfg(feature = "voice")]
 mod llm;
 #[cfg(feature = "voice")]
 mod notes;
@@ -29,6 +35,40 @@ const WAKE: &str = "sunday";
 const EXIT_ANIM: Duration = Duration::from_millis(220); // keep in sync with Hud.tsx
 const WAKE_HIDE_AFTER: Duration = Duration::from_secs(10); // matches stt::IDLE: talk on without the wake word
 const BOTTOM_MARGIN: f64 = 16.0; // logical px (~1em) above the bottom of the usable screen
+
+/// Shows a window without activating the app (activation drags the main window forward too).
+/// AppKit calls must run on the main thread, or the process aborts.
+pub(crate) fn order_front(app: &AppHandle, win: &WebviewWindow) {
+    let win = win.clone();
+    let _ = app.run_on_main_thread(move || {
+        #[cfg(target_os = "macos")]
+        if let Ok(ns) = win.ns_window() {
+            // SAFETY: ns_window is a live NSWindow owned by this webview window.
+            unsafe {
+                let w = ns as *mut objc2::runtime::AnyObject;
+                let _: () = objc2::msg_send![w, orderFrontRegardless];
+            }
+            return;
+        }
+        let _ = win.show();
+    });
+}
+
+/// Never takes clicks or focus, and floats over every Space (incl. fullscreen apps), so showing it
+/// doesn't switch Spaces or raise other windows. Call from the main thread (setup).
+fn float_everywhere(win: &WebviewWindow) {
+    let _ = win.set_ignore_cursor_events(true);
+    #[cfg(target_os = "macos")]
+    if let Ok(ns) = win.ns_window() {
+        const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
+        const FULLSCREEN_AUXILIARY: usize = 1 << 8;
+        // SAFETY: ns is the window's live NSWindow, and this runs on the main thread.
+        unsafe {
+            let w = ns as *mut objc2::runtime::AnyObject;
+            let _: () = objc2::msg_send![w, setCollectionBehavior: CAN_JOIN_ALL_SPACES | FULLSCREEN_AUXILIARY];
+        }
+    }
+}
 
 /// The HUD pill. `wake_until` keeps it up after the wake word; holding fn keeps it up too.
 #[derive(Clone)]
@@ -59,19 +99,7 @@ impl Hud {
     /// `show()` activates the app, which drags the main window to the front too.
     /// AppKit calls must run on the main thread, or the process aborts.
     fn show_without_activating(&self) {
-        let win = self.win.clone();
-        let _ = self.app.run_on_main_thread(move || {
-            #[cfg(target_os = "macos")]
-            if let Ok(ns) = win.ns_window() {
-                // SAFETY: ns_window is a live NSWindow owned by this webview window.
-                unsafe {
-                    let w = ns as *mut objc2::runtime::AnyObject;
-                    let _: () = objc2::msg_send![w, orderFrontRegardless];
-                }
-                return;
-            }
-            let _ = win.show();
-        });
+        order_front(&self.app, &self.win);
     }
 
     fn hide(&self) {
@@ -262,7 +290,7 @@ fn study_state(db: tauri::State<Arc<db::Db>>) -> db::State {
 
 /// One status line per file: what was indexed, or why not.
 #[cfg(feature = "voice")]
-#[tauri::command]
+#[tauri::command(async)]
 fn import_notes(paths: Vec<String>, db: tauri::State<Arc<db::Db>>) -> Vec<String> {
     paths
         .iter()
@@ -290,6 +318,93 @@ fn notes(db: tauri::State<Arc<db::Db>>) -> Vec<db::Doc> {
 #[tauri::command]
 fn remove_note(id: i64, db: tauri::State<Arc<db::Db>>) {
     db.remove_document(id);
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn skills(db: tauri::State<Arc<db::Db>>) -> Vec<skills::Manifest> {
+    db.skills()
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command(async)]
+fn skill_run(id: String, version: Option<i64>, input: String, db: tauri::State<Arc<db::Db>>) -> Result<serde_json::Value, String> {
+    llm::run_skill(&db, &llm::model_name(&db), &id, version, &input).map(|(v, _)| v).map_err(|e| e.to_string())
+}
+
+/// Runs every test of one version; the result is remembered, and approval needs it to be all-pass.
+#[cfg(feature = "voice")]
+#[tauri::command(async)]
+fn skill_test(id: String, version: i64, db: tauri::State<Arc<db::Db>>) -> Result<Vec<skills::TestResult>, String> {
+    let m = db.skill(&id, Some(version)).ok_or("no such skill")?;
+    let model = llm::model_name(&db);
+    let results: Vec<_> = m
+        .tests
+        .iter()
+        .map(|t| match llm::run_skill(&db, &model, &id, Some(version), &t.input) {
+            Ok((out, _)) => skills::check(t, &out),
+            Err(e) => skills::TestResult { input: t.input.clone(), pass: false, detail: e.to_string() },
+        })
+        .collect();
+    let pass = !results.is_empty() && results.iter().all(|r| r.pass);
+    db.kv_set(&format!("skilltest:{id}:{version}"), if pass { "pass" } else { "fail" });
+    Ok(results)
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn skill_set_status(id: String, version: i64, status: String, db: tauri::State<Arc<db::Db>>) -> Result<(), String> {
+    let m = db.skill(&id, Some(version)).ok_or("no such skill")?;
+    let passed = db.kv_get(&format!("skilltest:{id}:{version}")).as_deref() == Some("pass");
+    skills::transition(&m.status, &status, passed)?;
+    db.skill_set_status(&id, version, &status);
+    Ok(())
+}
+
+/// Drafts a prompt-only skill from a description. It is stored as `proposed` and can't run until reviewed, tested and approved.
+#[cfg(feature = "voice")]
+#[tauri::command(async)]
+fn propose_skill(description: String, db: tauri::State<Arc<db::Db>>) -> Result<skills::Manifest, String> {
+    let draft: skills::Draft = llm::json(&llm::model_name(&db), skills::DRAFT_SYSTEM, &description, skills::draft_schema(), 120).map_err(|e| e.to_string())?;
+    let mut m = skills::from_draft(&draft);
+    while db.skill(&m.id, Some(m.version)).is_some() {
+        m.version += 1;
+    }
+    db.skill_put(&m);
+    Ok(m)
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn model(db: tauri::State<Arc<db::Db>>) -> String {
+    llm::model_name(&db)
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn set_model(name: String, db: tauri::State<Arc<db::Db>>) {
+    db.kv_set("model", name.trim());
+}
+
+/// Installed Ollama models (empty if Ollama isn't running).
+#[cfg(feature = "voice")]
+#[tauri::command(async)]
+fn models() -> Vec<String> {
+    llm::installed_models()
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command(async)]
+fn diagnostics(db: tauri::State<Arc<db::Db>>) -> serde_json::Value {
+    let installed = llm::installed_models();
+    let (m, v) = (llm::model_name(&db), llm::vision_model(&db));
+    serde_json::json!({
+        "ollama": !installed.is_empty(),
+        "model": m, "model_installed": installed.contains(&m),
+        "vision_model": v, "vision_installed": installed.contains(&v),
+        "concepts": db.graph().len(), "notes": db.docs().len(), "skills": db.skills().len(),
+        "stt_models": std::path::Path::new(&models::path("silero_vad.onnx")).exists(),
+    })
 }
 
 #[cfg(feature = "voice")]
@@ -344,6 +459,24 @@ fn main() {
             #[cfg(feature = "voice")]
             graph,
             #[cfg(feature = "voice")]
+            skills,
+            #[cfg(feature = "voice")]
+            skill_run,
+            #[cfg(feature = "voice")]
+            skill_test,
+            #[cfg(feature = "voice")]
+            skill_set_status,
+            #[cfg(feature = "voice")]
+            propose_skill,
+            #[cfg(feature = "voice")]
+            model,
+            #[cfg(feature = "voice")]
+            set_model,
+            #[cfg(feature = "voice")]
+            models,
+            #[cfg(feature = "voice")]
+            diagnostics,
+            #[cfg(feature = "voice")]
             import_notes,
             #[cfg(feature = "voice")]
             notes,
@@ -357,18 +490,9 @@ fn main() {
             app.manage(Tts(Mutex::new(tts::spawn(app.handle().clone()))));
 
             let hud_win = app.get_webview_window("hud").expect("hud window");
-            // Never take clicks or focus, and float over every Space (incl. fullscreen apps)
-            // so showing it doesn't switch Spaces or raise other windows.
-            let _ = hud_win.set_ignore_cursor_events(true);
-            #[cfg(target_os = "macos")]
-            if let Ok(ns) = hud_win.ns_window() {
-                const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
-                const FULLSCREEN_AUXILIARY: usize = 1 << 8;
-                // SAFETY: setup runs on the main thread; ns is the HUD's live NSWindow.
-                unsafe {
-                    let w = ns as *mut objc2::runtime::AnyObject;
-                    let _: () = objc2::msg_send![w, setCollectionBehavior: CAN_JOIN_ALL_SPACES | FULLSCREEN_AUXILIARY];
-                }
+            float_everywhere(&hud_win);
+            if let Some(overlay) = app.get_webview_window("overlay") {
+                float_everywhere(&overlay);
             }
 
             let hud = Hud {

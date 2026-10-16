@@ -29,6 +29,20 @@
         "focus": false
       },
       {
+        "label": "overlay",
+        "title": "Sunday overlay",
+        "width": 800,
+        "height": 600,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "resizable": false,
+        "focus": false
+      },
+      {
         "label": "main",
         "title": "Sunday",
         "width": 1100,

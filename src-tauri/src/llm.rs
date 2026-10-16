@@ -2,6 +2,8 @@
 //! question) to the local Ollama model, stores the evidence, and delivers the reply to the
 //! workspace, the HUD and TTS.
 use crate::db::{Db, Hit, Pending};
+use crate::decision::{self, Action, Decider};
+use crate::skills::Manifest;
 use crate::study::{self, Grade, Quiz};
 use crate::tts::{self, Cmd};
 use crate::Hud;
@@ -16,8 +18,39 @@ use tauri::Emitter;
 
 type Res<T> = Result<T, Box<dyn std::error::Error>>;
 
+/// An error whose text is fit to be spoken to the user as is.
+#[derive(Debug)]
+pub struct UserMsg(pub String);
+impl std::fmt::Display for UserMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for UserMsg {}
+
 const URL: &str = "http://localhost:11434/api/chat";
-const MODEL: &str = "gemma4"; // override with SUNDAY_MODEL
+const MODEL: &str = "qwen3:4b";
+pub const VISION: &str = "qwen3-vl:4b";
+
+/// SUNDAY_MODEL, else the model picked in the palette, else the default.
+pub fn model_name(db: &Db) -> String {
+    std::env::var("SUNDAY_MODEL").ok().or_else(|| db.kv_get("model")).unwrap_or_else(|| MODEL.into())
+}
+
+/// Models Ollama has locally; empty if it isn't running.
+pub fn installed_models() -> Vec<String> {
+    ureq::get("http://localhost:11434/api/tags")
+        .timeout(std::time::Duration::from_secs(3))
+        .call()
+        .ok()
+        .and_then(|r| r.into_json::<Value>().ok())
+        .map(|v| v["models"].as_array().map(|a| a.iter().filter_map(|m| m["name"].as_str().map(String::from)).collect()).unwrap_or_default())
+        .unwrap_or_default()
+}
+
+pub fn vision_model(db: &Db) -> String {
+    std::env::var("SUNDAY_VISION").ok().or_else(|| db.kv_get("vision_model")).unwrap_or_else(|| VISION.into())
+}
 const KEEP: usize = 12; // history messages kept besides the system prompt
 
 /// One thing the user said. `voice` replies also go to the HUD and speakers; typed ones stay on screen.
@@ -40,7 +73,6 @@ struct Ctx<'a> {
 pub fn spawn(hud: Hud, speak: Sender<Cmd>, db: Arc<Db>) -> Sender<Turn> {
     let (tx, rx) = channel::<Turn>();
     std::thread::spawn(move || {
-        let model = std::env::var("SUNDAY_MODEL").unwrap_or_else(|_| MODEL.into());
         let mut history = vec![json!({"role": "system", "content": study::TUTOR})];
         // Pick the conversation back up after a restart.
         history.extend(db.history(6).into_iter().map(|m| json!({"role": m.role, "content": m.text})));
@@ -63,6 +95,7 @@ pub fn spawn(hud: Hud, speak: Sender<Cmd>, db: Arc<Db>) -> Sender<Turn> {
                     }
                 });
             }
+            let model = model_name(&db);
             let c = Ctx { hud: &hud, speak: &speak, db: &db, model: &model, ep, voice, sources: RefCell::default() };
             let reply = route(&c, &mut history, &q);
             waiting.store(false, Ordering::Relaxed);
@@ -72,7 +105,14 @@ pub fn spawn(hud: Hud, speak: Sender<Cmd>, db: Arc<Db>) -> Sender<Turn> {
                 Err(_) if tts::epoch() != ep => String::new(),
                 Err(e) => {
                     eprintln!("[llm] {e}");
-                    say(&c, "Sorry, I couldn't reach the model. Is Ollama running?")
+                    let msg = if let Some(u) = e.downcast_ref::<UserMsg>() {
+                        u.0.clone()
+                    } else if e.to_string().contains("404") {
+                        format!("The model {model} isn't installed. Run ollama pull {model}.")
+                    } else {
+                        "Sorry, I couldn't reach the model. Is Ollama running?".into()
+                    };
+                    say(&c, &msg)
                 }
             };
             if reply.is_empty() {
@@ -101,32 +141,77 @@ pub fn spawn(hud: Hud, speak: Sender<Cmd>, db: Arc<Db>) -> Sender<Turn> {
     tx
 }
 
-/// An unanswered question takes the next utterance as its answer, unless it's a new request.
+/// Every utterance is decided first (typed `Action`), checked, then run.
 fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
-    if let Some(p) = c.db.pending() {
-        if study::is_skip(q) {
-            c.db.set_pending(None);
-            return Ok(say(c, "Okay, skipped. Say quiz me when you're ready."));
-        }
-        if study::quiz_request(q).is_none() {
-            return grade(c, &p, q);
-        }
+    let pending = c.db.pending();
+    let action = decision::Rules.decide(q, pending.is_some());
+    if let Err(why) = decision::permitted(&action, |id| c.db.skill(id, None).is_some()) {
+        return Ok(say(c, &why));
     }
-    match study::quiz_request(q) {
-        Some(topic) => quiz(c, topic),
-        None => {
+    match (action, pending) {
+        (Action::Skip, _) => {
+            c.db.set_pending(None);
+            Ok(say(c, "Okay, skipped. Say quiz me when you're ready."))
+        }
+        (Action::Answer, Some(p)) => grade(c, &p, q),
+        (Action::Quiz(topic), _) => quiz(c, topic),
+        (Action::Notes(query), _) => notes_lookup(c, &query),
+        (Action::Skill { id, input }, _) => {
+            let (out, v) = run_skill(c.db, c.model, &id, None, &input)?;
+            let spoken = out.as_object().map(|o| o.values().filter_map(Value::as_str).collect::<Vec<_>>().join(". ")).unwrap_or_default();
+            c.sources.borrow_mut().push(format!("skill {id} v{v}"));
+            Ok(say(c, &spoken))
+        }
+        (Action::ClearScreen, _) => {
+            crate::screen::clear(&c.hud.app);
+            Ok(say(c, "Cleared."))
+        }
+        (Action::Screen(task), _) => crate::screen::explain(&c.hud.app, c.db, &task).map(|(text, marks)| {
+            if !marks.is_empty() {
+                crate::screen::show(&c.hud.app, &marks, 25);
+            }
+            say(c, &text)
+        }),
+        _ => {
             let hits = c.db.search(q, 3);
             chat(c, history, &hits)
         }
     }
 }
 
+fn notes_lookup(c: &Ctx, query: &str) -> Res<String> {
+    let hits = c.db.search(query, 3);
+    if hits.is_empty() {
+        return Ok(say(c, &format!("Nothing in your notes mentions {query}.")));
+    }
+    c.sources.borrow_mut().extend(hits.iter().map(|h| h.title.clone()));
+    let first: String = hits[0].text.split_terminator(['.', '\n']).next().unwrap_or("").trim().into();
+    let mut titles: Vec<String> = hits.iter().map(|h| h.title.clone()).collect();
+    titles.dedup();
+    Ok(say(c, &format!("Your notes on {} mention it. {first}.", titles.join(" and "))))
+}
+
+/// Runs a skill version (default: newest approved) and logs the run. Output is schema-constrained, then validated.
+pub fn run_skill(db: &Db, model: &str, id: &str, version: Option<i64>, input: &str) -> Res<(Value, i64)> {
+    let m: Manifest = db.skill(id, version).ok_or_else(|| format!("no such skill: {id}"))?;
+    let t = std::time::Instant::now();
+    let user = crate::skills::render(&m, input);
+    let system = format!("You are the skill {}: {} Reply with JSON only.", m.id, m.purpose);
+    let res = json::<Value>(model, &system, &user, m.schema(), m.timeout_s).and_then(|v| m.validate(&v).map(|_| v).map_err(Into::into));
+    let ms = t.elapsed().as_millis() as i64;
+    match &res {
+        Ok(v) => db.skill_run_logged(&m.id, m.version, input, &v.to_string(), ms, ""),
+        Err(e) => db.skill_run_logged(&m.id, m.version, input, "", ms, &e.to_string()),
+    }
+    res.map(|v| (v, m.version))
+}
+
 /// Structured output: the schema constrains the model, serde validates, one retry, then give up.
-fn json<T: DeserializeOwned>(model: &str, system: &str, user: &str, schema: Value) -> Res<T> {
+pub fn json<T: DeserializeOwned>(model: &str, system: &str, user: &str, schema: Value, timeout_s: u64) -> Res<T> {
     let body = json!({"model": model, "stream": false, "think": false, "keep_alive": "30m", "format": schema,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]});
     for _ in 0..2 {
-        let v: Value = ureq::post(URL).send_json(&body)?.into_json()?;
+        let v: Value = ureq::post(URL).timeout(std::time::Duration::from_secs(timeout_s)).send_json(&body)?.into_json()?;
         if let Ok(t) = serde_json::from_str(v["message"]["content"].as_str().unwrap_or("")) {
             return Ok(t);
         }
@@ -150,7 +235,7 @@ fn quiz(c: &Ctx, topic: Option<String>) -> Res<String> {
         ask.push_str(&format!("\nBase the question on these notes from the student:\n{}", notes_block(&hits)));
         c.sources.borrow_mut().extend(hits.iter().map(|h| h.title.clone()));
     }
-    let z: Quiz = json(c.model, study::QUIZ, &ask, study::quiz_schema())?;
+    let z: Quiz = json(c.model, study::QUIZ, &ask, study::quiz_schema(), 120)?;
     let p = Pending {
         concept: concept.unwrap_or(z.concept).trim().to_lowercase(),
         question: z.question.trim().into(),
@@ -162,7 +247,7 @@ fn quiz(c: &Ctx, topic: Option<String>) -> Res<String> {
 
 fn grade(c: &Ctx, p: &Pending, said: &str) -> Res<String> {
     let ask = format!("Question: {}\nReference answer: {}\nStudent answer: {said}", p.question, p.answer);
-    let g: Grade = json(c.model, study::GRADE, &ask, study::grade_schema())?;
+    let g: Grade = json(c.model, study::GRADE, &ask, study::grade_schema(), 120)?;
     c.db.attempt(p, said, g.verdict, &g.error_type, &g.feedback);
     c.db.set_pending(None);
     let lead = match g.verdict {
@@ -279,11 +364,11 @@ mod tests {
     fn model_returns_valid_study_json() {
         let m = std::env::var("SUNDAY_MODEL").unwrap_or_else(|_| MODEL.into());
         let t = std::time::Instant::now();
-        let z: Quiz = json(&m, study::QUIZ, "Concept: deadlock. Do not repeat these questions: []", study::quiz_schema()).unwrap();
+        let z: Quiz = json(&m, study::QUIZ, "Concept: deadlock. Do not repeat these questions: []", study::quiz_schema(), 120).unwrap();
         println!("quiz in {:?}: {z:?}", t.elapsed());
         let t = std::time::Instant::now();
         let ask = format!("Question: {}\nReference answer: {}\nStudent answer: I have no idea", z.question, z.answer);
-        let g: Grade = json(&m, study::GRADE, &ask, study::grade_schema()).unwrap();
+        let g: Grade = json(&m, study::GRADE, &ask, study::grade_schema(), 120).unwrap();
         println!("grade in {:?}: {g:?}", t.elapsed());
         assert_eq!(g.verdict, crate::db::Verdict::Wrong);
     }

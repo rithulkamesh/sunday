@@ -2,6 +2,7 @@
   "identifier": "default",
   "windows": [
     "hud",
+    "overlay",
     "main"
   ],
   "permissions": [

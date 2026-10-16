@@ -1,6 +1,7 @@
 //! SQLite: the authoritative record of what was said, what was asked, and when to ask again.
 //! Evidence (attempts) is stored raw; the review schedule is derived and can be rebuilt from it.
 use rusqlite::{params, Connection, OptionalExtension};
+use crate::skills::Manifest as Skill;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
@@ -118,10 +119,17 @@ impl Db {
              CREATE TABLE IF NOT EXISTS concepts(name TEXT PRIMARY KEY, subject TEXT, ord INTEGER);
              CREATE TABLE IF NOT EXISTS prereqs(concept TEXT, requires TEXT, PRIMARY KEY(concept, requires));
              CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, ts INTEGER, title TEXT, path TEXT, hash TEXT UNIQUE);
+             CREATE TABLE IF NOT EXISTS skills(id TEXT, version INTEGER, manifest TEXT, status TEXT, PRIMARY KEY(id, version));
+             CREATE TABLE IF NOT EXISTS skill_runs(id INTEGER PRIMARY KEY, ts INTEGER, skill TEXT, version INTEGER, input TEXT, output TEXT, ms INTEGER, error TEXT);
              CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(text, doc UNINDEXED, n UNINDEXED);",
         )?;
         let db = Self(Mutex::new(c));
         db.seed(include_str!("../domains/gate.txt"));
+        for m in crate::skills::builtins() {
+            if db.skill(&m.id, Some(m.version)).is_none() {
+                db.skill_put(&m);
+            }
+        }
         Ok(db)
     }
 
@@ -303,6 +311,55 @@ impl Db {
             .collect()
     }
 
+    pub fn kv_get(&self, key: &str) -> Option<String> {
+        self.0.lock().unwrap().query_row("SELECT value FROM kv WHERE key = ?", [key], |r| r.get(0)).optional().unwrap()
+    }
+
+    pub fn kv_set(&self, key: &str, value: &str) {
+        let _ = self.0.lock().unwrap().execute("INSERT OR REPLACE INTO kv(key, value) VALUES (?, ?)", params![key, value]);
+    }
+
+    pub fn skill_put(&self, m: &Skill) {
+        let _ = self.0.lock().unwrap().execute(
+            "INSERT OR REPLACE INTO skills(id, version, manifest, status) VALUES (?,?,?,?)",
+            params![m.id, m.version, serde_json::to_string(m).unwrap(), m.status],
+        );
+    }
+
+    /// A specific version, or the newest approved one.
+    pub fn skill(&self, id: &str, version: Option<i64>) -> Option<Skill> {
+        let c = self.0.lock().unwrap();
+        let row: Option<(String, String)> = match version {
+            Some(v) => c.query_row("SELECT manifest, status FROM skills WHERE id = ? AND version = ?", params![id, v], |r| Ok((r.get(0)?, r.get(1)?))).optional().unwrap(),
+            None => c
+                .query_row("SELECT manifest, status FROM skills WHERE id = ? AND status = 'approved' ORDER BY version DESC LIMIT 1", [id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .optional()
+                .unwrap(),
+        };
+        row.and_then(|(m, st)| serde_json::from_str::<Skill>(&m).ok().map(|mut m| { m.status = st; m }))
+    }
+
+    pub fn skills(&self) -> Vec<Skill> {
+        let c = self.0.lock().unwrap();
+        let mut st = c.prepare("SELECT manifest, status FROM skills ORDER BY id, version DESC").unwrap();
+        st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .unwrap()
+            .flatten()
+            .filter_map(|(m, st)| serde_json::from_str::<Skill>(&m).ok().map(|mut m| { m.status = st; m }))
+            .collect()
+    }
+
+    pub fn skill_set_status(&self, id: &str, version: i64, status: &str) {
+        let _ = self.0.lock().unwrap().execute("UPDATE skills SET status = ? WHERE id = ? AND version = ?", params![status, id, version]);
+    }
+
+    pub fn skill_run_logged(&self, skill: &str, version: i64, input: &str, output: &str, ms: i64, error: &str) {
+        let _ = self.0.lock().unwrap().execute(
+            "INSERT INTO skill_runs(ts, skill, version, input, output, ms, error) VALUES (?,?,?,?,?,?,?)",
+            params![now(), skill, version, input, output, ms, error],
+        );
+    }
+
     pub fn state(&self) -> State {
         let (total, correct) = {
             let c = self.0.lock().unwrap();
@@ -396,6 +453,23 @@ mod tests {
 
     fn hits_doc_id(db: &Db, title: &str) -> i64 {
         db.docs().iter().find(|d| d.title == title).unwrap().id
+    }
+
+    #[test]
+    fn skills_resolve_to_the_newest_approved_version() {
+        let db = Db::init(Connection::open_in_memory().unwrap()).unwrap();
+        assert!(db.skill("study.mnemonic", None).is_none()); // built-ins start experimental
+        assert_eq!(db.skill("study.mnemonic", Some(1)).unwrap().status, "experimental");
+        db.skill_set_status("study.mnemonic", 1, "approved");
+        let mut v2 = db.skill("study.mnemonic", Some(1)).unwrap();
+        v2.version = 2;
+        db.skill_put(&v2);
+        db.skill_set_status("study.mnemonic", 2, "approved");
+        assert_eq!(db.skill("study.mnemonic", None).unwrap().version, 2);
+        db.skill_set_status("study.mnemonic", 2, "deprecated"); // rollback
+        assert_eq!(db.skill("study.mnemonic", None).unwrap().version, 1);
+        db.kv_set("model", "qwen3:4b");
+        assert_eq!(db.kv_get("model").as_deref(), Some("qwen3:4b"));
     }
 
     #[test]
