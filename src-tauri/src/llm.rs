@@ -3,7 +3,9 @@ use crate::tts::{self, Cmd};
 use crate::Hud;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
+use std::sync::Arc;
 use tauri::Emitter;
 
 const URL: &str = "http://localhost:11434/api/chat";
@@ -23,7 +25,18 @@ pub fn spawn(hud: Hud, speak: Sender<Cmd>) -> Sender<String> {
             let ep = tts::epoch();
             let _ = hud.app.emit("state", "thinking");
             let _ = speak.send(Cmd::Chime);
-            let reply = chat(&hud, &speak, &model, &history, ep).unwrap_or_else(|e| {
+            // Thinking can outlast the wake window; keep the HUD awake until the reply arrives.
+            let waiting = Arc::new(AtomicBool::new(true));
+            let (h, w) = (hud.clone(), waiting.clone());
+            std::thread::spawn(move || {
+                while w.load(Ordering::Relaxed) {
+                    h.touch();
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+            });
+            let reply = chat(&hud, &speak, &model, &history, ep);
+            waiting.store(false, Ordering::Relaxed);
+            let reply = reply.unwrap_or_else(|e| {
                 eprintln!("[llm] {e}");
                 String::new()
             });

@@ -20,7 +20,7 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, WebviewWind
 
 const WAKE: &str = "sunday";
 const EXIT_ANIM: Duration = Duration::from_millis(220); // keep in sync with Hud.tsx
-const WAKE_HIDE_AFTER: Duration = Duration::from_secs(8);
+const WAKE_HIDE_AFTER: Duration = Duration::from_secs(10); // matches stt::IDLE: talk on without the wake word
 const BOTTOM_MARGIN: f64 = 16.0; // logical px (~1em) above the bottom of the usable screen
 
 /// The HUD pill. `wake_until` keeps it up after the wake word; holding fn keeps it up too.
@@ -146,6 +146,9 @@ fn on_speech(hud: &Hud, text: &str, is_final: bool) -> Option<String> {
     } else if hud.woken() || fn_down() {
         text
     } else {
+        if is_final {
+            eprintln!("[stt] ignored, not awake: {text:?}");
+        }
         return None;
     };
     hud.touch();
