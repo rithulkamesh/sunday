@@ -85,7 +85,7 @@ impl Decider for Rules {
             return Action::ClearScreen;
         }
         if has(&[" my screen ", " this screen ", " on screen ", " on the screen ", " what i'm looking at ", " what im looking at ", " this page ", " this problem ", " this question ", " explain this ", " what is this ", " what's this ", " point to ", " point at ", " draw on "]) {
-            return Action::Screen(text.trim().to_string());
+            return Action::Screen(fix_heard(text.trim()));
         }
         for lead in [" run skill ", " use skill ", " use the skill "] {
             if let Some(rest) = t.trim_start().strip_prefix(lead.trim_start()).map(str::trim) {
@@ -128,6 +128,38 @@ pub fn permitted(a: &Action, skill_exists: impl Fn(&str) -> bool, web_on: bool) 
     }
 }
 
+/// Lookahead correction for speech-to-text: a word that sounds like "what is" right before an
+/// unmistakable anchor ("on my screen") is almost certainly "what is" ("water on my screen").
+/// ponytail: one anchor family, consonant-skeleton match; add anchors/heads as mishearings show up.
+fn fix_heard(text: &str) -> String {
+    let skel = |w: &str| -> String { w.to_lowercase().chars().filter(|c| c.is_alphabetic() && !"aeiouh".contains(*c)).collect() };
+    let dist = |a: &str, b: &str| -> usize {
+        let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+        let mut row: Vec<usize> = (0..=b.len()).collect();
+        for i in 1..=a.len() {
+            let mut prev = row[0];
+            row[0] = i;
+            for j in 1..=b.len() {
+                let cur = row[j];
+                row[j] = (prev + (a[i - 1] != b[j - 1]) as usize).min(row[j] + 1).min(row[j - 1] + 1);
+                prev = cur;
+            }
+        }
+        row[b.len()]
+    };
+    let mut words: Vec<String> = text.split_whitespace().map(String::from).collect();
+    for i in 0..words.len().saturating_sub(2) {
+        let anchor = ["on", "in"].contains(&words[i + 1].to_lowercase().as_str())
+            && ["my", "the"].contains(&words[i + 2].to_lowercase().as_str())
+            && words.get(i + 3).is_some_and(|w| w.to_lowercase().starts_with("screen"));
+        let w = words[i].trim_matches(|c: char| !c.is_alphabetic());
+        if anchor && w.len() >= 3 && !["what", "what's", "whats", "that", "this", "anything"].contains(&w.to_lowercase().as_str()) && dist(&skel(w), "wts") <= 1 {
+            words[i] = if w.chars().next().is_some_and(char::is_uppercase) { "What is".into() } else { "what is".into() };
+        }
+    }
+    words.join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,6 +181,10 @@ mod tests {
         assert_eq!(d("skip", false), Chat);
         assert!(matches!(d("Can you explain what's on my screen?", false), Screen(_)));
         assert!(matches!(d("explain this question", true), Screen(_))); // wins over answering
+        assert_eq!(d("Water on my screen", false), Screen("What is on my screen".into()));
+        assert_eq!(fix_heard("explain water on my screen"), "explain what is on my screen");
+        assert_eq!(fix_heard("what's on my screen"), "what's on my screen");
+        assert_eq!(fix_heard("look at the writing on my screen"), "look at the writing on my screen");
         assert_eq!(d("clear the screen", false), ClearScreen);
         assert_eq!(d("Sunday, remember that my driving test is on 8 February.", false), Remember("my driving test is on 8 February".into()));
         assert_eq!(d("learn this page", false), LearnPage(None));
