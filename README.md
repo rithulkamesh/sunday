@@ -7,6 +7,7 @@ Silero VAD + wake-word spotter + Parakeet (speech in), Ollama (thinking), Kokoro
 
 ```sh
 scripts/fetch-models.sh     # once: speech models into ~/.cache/sunday/models
+scripts/build-ocr.sh        # once: exact screen-text reader for pointing (needs Xcode command line tools)
 ollama pull gemma4          # or: SUNDAY_MODEL=<any ollama model>
 bun install && bun run tauri dev
 ```
@@ -28,7 +29,7 @@ Chat answers quote them ("from your notes on …") and show the sources; quizzes
 
 **Screen.** "Explain what's on my screen", "what is this question", "point to …": takes one screenshot, a local vision model
 explains it, Sunday speaks, and boxes/circles/arrows are drawn on a click-through overlay for 25 s ("clear the screen" removes them).
-Only on request; the image is read once, sent to local Ollama only, and deleted. Needs Screen Recording permission.
+Pointing at text is exact: macOS's text recogniser (`scripts/ocr.swift`) finds every line's box, the model just picks line numbers. Only for non-text things (diagrams, icons) does it use the model's own coordinates, which are approximate. Only on request; the image is read once, sent to local Ollama only, and deleted. Needs Screen Recording permission. A look takes ~25 s.
 
 **Skills.** Versioned, prompt-only capabilities (a template, an output schema, tests). No generated code, no tools.
 Lifecycle: proposed → experimental → approved; approval needs a passing test run on that version; any approved version can be rolled back.

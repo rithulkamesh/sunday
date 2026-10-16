@@ -404,6 +404,7 @@ fn diagnostics(db: tauri::State<Arc<db::Db>>) -> serde_json::Value {
         "vision_model": v, "vision_installed": installed.contains(&v),
         "concepts": db.graph().len(), "notes": db.docs().len(), "skills": db.skills().len(),
         "stt_models": std::path::Path::new(&models::path("silero_vad.onnx")).exists(),
+        "ocr": models::dir().parent().is_some_and(|p| p.join("bin/ocr").exists()),
     })
 }
 

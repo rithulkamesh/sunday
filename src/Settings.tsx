@@ -12,6 +12,7 @@ type Diag = {
   notes: number;
   skills: number;
   stt_models: boolean;
+  ocr: boolean;
 };
 
 /** Models and a health check: when something goes wrong, which part is it? */
@@ -53,6 +54,7 @@ export function Settings() {
           <Row ok={d.ollama} name="Ollama running" note="not reachable: start Ollama" />
           <Row ok={d.model_installed} name={`Model ${d.model}`} note={`run: ollama pull ${d.model}`} />
           <Row ok={d.vision_installed} name={`Vision model ${d.vision_model} (screen)`} note={`run: ollama pull ${d.vision_model}`} />
+          <Row ok={d.ocr} name="Screen text reader (exact pointing)" note="run scripts/build-ocr.sh" />
           <Row ok={d.stt_models} name="Speech models" note="run scripts/fetch-models.sh" />
           <Row ok={d.concepts > 0} name={`Syllabus · ${d.concepts} concepts`} />
           <Row ok name={`${d.notes} notes imported · ${d.skills} skills`} />
