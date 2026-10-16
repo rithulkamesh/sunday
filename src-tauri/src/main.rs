@@ -223,7 +223,7 @@ fn main() {
         ])
         .setup(|app| {
             #[cfg(feature = "voice")]
-            app.manage(Tts(Mutex::new(tts::spawn())));
+            app.manage(Tts(Mutex::new(tts::spawn(app.handle().clone()))));
 
             let hud_win = app.get_webview_window("hud").expect("hud window");
             // Never take clicks or focus, and float over every Space (incl. fullscreen apps)

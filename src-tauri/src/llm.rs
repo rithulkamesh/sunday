@@ -21,6 +21,7 @@ pub fn spawn(hud: Hud, speak: Sender<Cmd>) -> Sender<String> {
         for q in rx {
             history.push(json!({"role": "user", "content": q}));
             let _ = hud.app.emit("state", "thinking");
+            let _ = speak.send(Cmd::Chime);
             let reply = chat(&hud, &speak, &model, &history).unwrap_or_else(|e| {
                 eprintln!("[llm] {e}");
                 String::new()
@@ -55,7 +56,6 @@ fn chat(hud: &Hud, speak: &Sender<Cmd>, model: &str, history: &[Value]) -> Resul
         full.push_str(tok);
         pending.push_str(tok);
         hud.touch();
-        let _ = hud.app.emit("transcript", full.trim());
         while let Some(s) = take_sentence(&mut pending, first) {
             first = false;
             let _ = speak.send(Cmd::Speak(s));

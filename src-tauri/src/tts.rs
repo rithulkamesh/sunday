@@ -72,11 +72,28 @@ impl Speaker {
         let cfg = GenerationConfig { sid: 0, speed: 1.0, ..Default::default() };
         let none: Option<fn(&[f32], f32) -> bool> = None;
         if let Some(audio) = self.tts.generate_with_config(text, &cfg, none) {
-            let secs = audio.samples().len() as f64 / self.tts.sample_rate() as f64;
-            let mut until = UNTIL.lock().unwrap();
-            *until = Some(until.filter(|t| *t > Instant::now()).unwrap_or_else(Instant::now) + Duration::from_secs_f64(secs));
-            self.queue.lock().unwrap().extend(audio.samples());
+            self.enqueue(audio.samples());
         }
+    }
+
+    fn enqueue(&self, samples: &[f32]) {
+        let secs = samples.len() as f64 / self.tts.sample_rate() as f64;
+        let mut until = UNTIL.lock().unwrap();
+        *until = Some(until.filter(|t| *t > Instant::now()).unwrap_or_else(Instant::now) + Duration::from_secs_f64(secs));
+        self.queue.lock().unwrap().extend(samples);
+    }
+
+    /// Two soft rising notes: "heard you, working on it".
+    fn chime(&self) {
+        let rate = self.tts.sample_rate() as f32;
+        let mut out = Vec::new();
+        for (hz, ms) in [(659.25_f32, 110.0_f32), (880.0, 260.0)] {
+            for i in 0..(rate * ms / 1000.0) as usize {
+                let t = i as f32 / rate;
+                out.push(0.18 * (-t * 12.0).exp() * (std::f32::consts::TAU * hz * t).sin());
+            }
+        }
+        self.enqueue(&out);
     }
 
     /// Cut playback immediately (user interruption).
@@ -88,17 +105,23 @@ impl Speaker {
 
 pub enum Cmd {
     Speak(String),
+    Chime,
     Stop,
 }
 
 /// cpal streams aren't Send, so the speaker lives on its own thread; talk to it by channel.
-pub fn spawn() -> std::sync::mpsc::Sender<Cmd> {
+pub fn spawn(app: tauri::AppHandle) -> std::sync::mpsc::Sender<Cmd> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let Some(speaker) = Speaker::new() else { return eprintln!("tts unavailable") };
         for cmd in rx {
             match cmd {
-                Cmd::Speak(t) => speaker.speak(&t),
+                Cmd::Speak(t) => {
+                    speaker.speak(&t);
+                    // Words go on screen as their audio starts, not before.
+                    let _ = tauri::Emitter::emit(&app, "say", t.trim());
+                }
+                Cmd::Chime => speaker.chime(),
                 Cmd::Stop => speaker.stop(),
             }
         }

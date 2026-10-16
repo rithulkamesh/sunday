@@ -18,10 +18,16 @@ export function Hud() {
       listen<State>("state", (e) => {
         setState(e.payload);
         setOpen(e.payload !== "idle");
+        if (e.payload === "thinking") setText(""); // spinner only until the reply is audible
         // Let the exit animation finish before the words disappear.
         if (e.payload === "idle") setTimeout(() => setText(""), 250);
       }),
       listen<string>("transcript", (e) => setText(e.payload)),
+      // Reply sentences arrive as they start playing.
+      listen<string>("say", (e) => {
+        setState("listening");
+        setText((t) => `${t} ${e.payload}`.trim());
+      }),
     ];
     return () => void subs.forEach((s) => s.then((off) => off()));
   }, []);
