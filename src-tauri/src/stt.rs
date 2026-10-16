@@ -26,6 +26,13 @@ pub enum Heard {
     Keyword(String),
 }
 
+/// A short sign-off ("bye", "okay goodbye", "that's all") ends the conversation.
+pub fn is_goodbye(text: &str) -> bool {
+    let t = text.to_lowercase();
+    let w: Vec<&str> = t.split(|c: char| !c.is_alphanumeric() && c != '\'').filter(|w| !w.is_empty()).collect();
+    w.len() <= 4 && (w.iter().any(|x| matches!(*x, "bye" | "goodbye" | "goodnight")) || t.contains("that's all") || t.contains("stop listening"))
+}
+
 fn load_kws() -> Option<KeywordSpotter> {
     let mut c = KeywordSpotterConfig::default();
     let t = &mut c.model_config;
@@ -104,6 +111,15 @@ impl Stt {
             speaking: false,
             since_interim: 0,
         })
+    }
+
+    /// Conversation over: drop the big model now instead of waiting out IDLE.
+    pub fn cool(&mut self) {
+        self.recognizer = None;
+        self.buf.clear();
+        self.fed = 0;
+        self.speaking = false;
+        eprintln!("[stt] cooled, model unloaded");
     }
 
     /// Load the big model now (wake word or fn) and keep it for IDLE.
@@ -216,6 +232,16 @@ mod tests {
         stt.last_active = Instant::now() - IDLE - Duration::from_secs(1);
         stt.push(&silence[..1600], false);
         assert!(stt.recognizer.is_none(), "model still loaded when idle");
+    }
+
+    #[test]
+    fn goodbyes() {
+        for yes in ["Bye.", "Okay, goodbye!", "Thanks, bye bye", "That's all.", "Sunday, stop listening"] {
+            assert!(is_goodbye(yes), "{yes}");
+        }
+        for no in ["What's the weather", "Say bye to my mom in French please", "Goodbye is a long word to spell"] {
+            assert!(!is_goodbye(no), "{no}");
+        }
     }
 
     /// Kokoro says it, the spotter must hear it: wake on "Sunday", not on "Monday".

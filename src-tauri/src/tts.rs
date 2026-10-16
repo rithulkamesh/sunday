@@ -46,6 +46,25 @@ pub fn busy() -> bool {
     REPLYING.load(Ordering::SeqCst) || talking()
 }
 
+/// The last few hundred chars Sunday said, to recognise its own echo coming back via the mic.
+static SAID: Mutex<String> = Mutex::new(String::new());
+const ECHO_WINDOW: Duration = Duration::from_secs(3);
+
+fn words(s: &str) -> Vec<String> {
+    s.split(|c: char| !c.is_alphanumeric() && c != '\'').filter(|w| !w.is_empty()).map(str::to_lowercase).collect()
+}
+
+/// True if `text` is (mostly) what Sunday just said: a transcript of our own speaker output.
+pub fn is_echo(text: &str) -> bool {
+    let recent = UNTIL.lock().unwrap().is_some_and(|t| Instant::now() < t + ECHO_WINDOW);
+    let w = words(text);
+    if !recent || w.len() < 2 {
+        return false;
+    }
+    let said = words(&SAID.lock().unwrap());
+    w.iter().filter(|x| said.contains(x)).count() * 10 >= w.len() * 8
+}
+
 static EPOCH: AtomicU64 = AtomicU64::new(0);
 
 pub fn epoch() -> u64 {
@@ -132,6 +151,14 @@ impl Speaker {
             return false;
         }
         self.enqueue(&audio);
+        let mut said = SAID.lock().unwrap();
+        said.push_str(text);
+        said.push(' ');
+        if said.len() > 800 {
+            let cut = said.len() - 800;
+            let cut = (cut..said.len()).find(|i| said.is_char_boundary(*i)).unwrap_or(0);
+            said.drain(..cut);
+        }
         true
     }
 
@@ -186,6 +213,18 @@ pub fn spawn(app: tauri::AppHandle) -> std::sync::mpsc::Sender<Cmd> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recognises_own_echo() {
+        *SAID.lock().unwrap() = "I can answer questions and help you with information. ".into();
+        assert!(!is_echo("answer questions")); // nothing has just finished playing
+        *UNTIL.lock().unwrap() = Some(Instant::now());
+        assert!(is_echo("I can answer questions and help"));
+        assert!(!is_echo("what is the weather in Paris"));
+        assert!(!is_echo("answer")); // one word is too ambiguous to drop
+        *UNTIL.lock().unwrap() = Some(Instant::now() - Duration::from_secs(10));
+        assert!(!is_echo("I can answer questions and help")); // long ago: a real person
+    }
 
     /// Needs the models from scripts/fetch-models.sh. Prints synthesis time vs audio length.
     #[test]

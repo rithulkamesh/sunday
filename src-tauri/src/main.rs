@@ -200,9 +200,23 @@ fn listen(hud: Hud) {
                 }
                 for heard in s.push(&chunk, muted) {
                     match heard {
-                        stt::Heard::Interim(t) => drop(on_speech(&hud, &t, false)),
+                        stt::Heard::Interim(t) => {
+                            if !tts::is_echo(&t) {
+                                drop(on_speech(&hud, &t, false));
+                            }
+                        }
                         stt::Heard::Final(t) => {
                             eprintln!("[stt] {t:?}");
+                            if tts::is_echo(&t) {
+                                eprintln!("[stt] ignored: our own voice coming back");
+                                continue;
+                            }
+                            if hud.woken() && stt::is_goodbye(&t) {
+                                tts::interrupt();
+                                hud.hide();
+                                s.cool();
+                                continue;
+                            }
                             if let Some(q) = on_speech(&hud, &t, true) {
                                 tts::interrupt(); // a new question cancels a reply still in flight
                                 let _ = reply.send(q);
