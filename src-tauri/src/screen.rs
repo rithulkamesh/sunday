@@ -58,7 +58,8 @@ struct Look {
 
 const SYSTEM: &str = "You see a screenshot of the user's screen and explain what they ask about, like a patient tutor sitting next to them. Speak to them as \"you\"; never begin with \"The user\". \
 `explanation` is at most three short spoken sentences: plain words, no markdown, and refer to things by what they say or look like. \
-`marks` point at the specific things you mention, at most four. kind is box (a region), circle (a small item), underline (a line of text) or arrow (a pointer to an item). \
+`marks` point at the specific things you mention, at most four. Point at the content the user is working on, never at window chrome \
+(menu bar, tabs, title bars, status bars, notifications) unless they ask. `label` says what the marked thing is about, not where it is on screen. kind is box (a region), circle (a small item), underline (a line of text) or arrow (a pointer to an item). \
 label is at most four words. If nothing needs pointing at, return no marks. \
 You may be given the screen's text as numbered lines. To point at text, set `line` to that number: the position is then exact, so set x,y,w,h to 0. \
 Only for things that are not text (pictures, diagrams, icons) set `line` to -1 and give x,y,w,h as 0 to 1000 relative to the image, origin top-left, x,y the top-left corner.";
@@ -190,11 +191,22 @@ fn look(model: &str, seen: &Seen, task: &str) -> Res<Look> {
     Err("the vision model returned invalid JSON twice".into())
 }
 
+/// Window chrome the model keeps pointing at: the menu bar is the top few percent of the main display.
+/// Dropped before numbering, so indices stay consistent, unless the task is about it.
+fn drop_chrome(mut lines: Vec<Line>, task: &str) -> Vec<Line> {
+    let t = task.to_lowercase();
+    if !(t.contains("menu bar") || t.contains("menubar") || t.contains("clock") || t.contains("battery")) {
+        lines.retain(|l| l.y >= 35.0);
+    }
+    lines
+}
+
 /// Looks at the screen for `task`. Returns the spoken explanation and the marks to draw.
 pub fn explain(app: &AppHandle, db: &Db, task: &str) -> Res<(String, Vec<Mark>)> {
     clear(app); // don't photograph our own drawing
     std::thread::sleep(std::time::Duration::from_millis(250));
-    let seen = capture()?;
+    let mut seen = capture()?;
+    seen.lines = drop_chrome(std::mem::take(&mut seen.lines), task);
     let l = look(&llm::vision_model(db), &seen, task)?;
     Ok((l.explanation.trim().to_string(), sanitize(l.marks, &seen.lines)))
 }
@@ -253,6 +265,13 @@ mod tests {
     }
 
     #[test]
+    fn menu_bar_text_is_not_offered_unless_asked() {
+        let l = |y: f64| Line { text: "x".into(), x: 0.0, y, w: 10.0, h: 10.0 };
+        assert_eq!(drop_chrome(vec![l(7.0), l(300.0)], "what's on my screen").len(), 1);
+        assert_eq!(drop_chrome(vec![l(7.0), l(300.0)], "what time does the menu bar clock say").len(), 2);
+    }
+
+    #[test]
     fn text_marks_snap_to_ocr_lines() {
         let lines = vec![
             Line { text: "first".into(), x: 20.0, y: 100.0, w: 300.0, h: 14.0 },
@@ -277,7 +296,7 @@ mod tests {
         }
         let seen = capture().expect("capture");
         let t = std::time::Instant::now();
-        let l = look(&std::env::var("SUNDAY_VISION").unwrap_or_else(|_| llm::VISION.into()), &seen, "Point at the line about Laya and the line about Grading.").expect("look");
+        let l = look(&std::env::var("SUNDAY_VISION").unwrap_or_else(|_| llm::VISION.into()), &seen, "What is on my screen? Point at the most important thing.").expect("look");
         println!("{:?} -> {}\n{:?}", t.elapsed(), l.explanation, sanitize(l.marks, &seen.lines));
     }
 }

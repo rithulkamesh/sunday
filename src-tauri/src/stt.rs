@@ -74,6 +74,7 @@ pub struct Stt {
     voice_vad: VoiceActivityDetector,
     muted_rest: Vec<f32>, // samples not yet a full VAD window
     was_muted: bool,
+    muted_samples: usize, // fed to `voice_vad` since its last reset
     kws: KeywordSpotter,
     kws_stream: OnlineStream,
     /// Loaded on demand (hundreds of MB), dropped after IDLE.
@@ -93,26 +94,27 @@ impl Stt {
             eprintln!("models missing: run scripts/fetch-models.sh");
             return None;
         }
-        let vad_cfg = |min_silence: f32, min_speech: f32| {
+        let vad_cfg = |min_silence: f32, min_speech: f32, max_speech: f32| {
             let mut vad = VadModelConfig::default();
             vad.silero_vad.model = Some(path("silero_vad.onnx"));
             vad.silero_vad.threshold = 0.5;
             vad.silero_vad.min_silence_duration = min_silence;
             vad.silero_vad.min_speech_duration = min_speech;
-            vad.silero_vad.max_speech_duration = 20.0;
+            vad.silero_vad.max_speech_duration = max_speech;
             vad.silero_vad.window_size = WINDOW as i32;
             vad.sample_rate = 16_000;
             vad
         };
-        let vad = vad_cfg(0.4, 0.2);
+        let vad = vad_cfg(0.4, 0.2, 20.0);
 
         let kws = load_kws()?;
         Some(Self {
             vad: VoiceActivityDetector::create(&vad, 60.0)?,
             // Quicker to react; only used while muted, to tell voices from claps.
-            voice_vad: VoiceActivityDetector::create(&vad_cfg(0.2, 0.1), 5.0)?,
+            voice_vad: VoiceActivityDetector::create(&vad_cfg(0.2, 0.1, 20.0), 5.0)?,
             muted_rest: Vec::new(),
             was_muted: false,
+            muted_samples: 0,
             kws_stream: kws.create_stream(),
             kws,
             recognizer: None,
@@ -173,12 +175,19 @@ impl Stt {
             while !self.voice_vad.is_empty() {
                 self.voice_vad.pop();
             }
+            // Its buffer holds 5 s and our own voice never pauses to let it drain: start over every 3 s.
+            self.muted_samples += n;
+            if self.muted_samples > 3 * 16_000 {
+                self.voice_vad.reset();
+                self.muted_samples = 0;
+            }
             return out;
         }
         if self.was_muted {
             self.was_muted = false;
             self.voice_vad.reset();
             self.muted_rest.clear();
+            self.muted_samples = 0;
         }
         self.buf.extend_from_slice(chunk);
         self.since_interim += chunk.len();
@@ -297,5 +306,20 @@ mod tests {
         assert!(run("Monday, what time is it?", false).0.is_empty());
         assert!(run("Please stop talking right now.", true).0.contains(&"stop".to_string()));
         assert_eq!(run("Sunday, wait", true), (vec!["sunday".to_string()], false)); // muted: no model load
+    }
+
+    /// Sunday's own voice never pauses; the quick VAD used while muted must keep flushing it
+    /// (sherpa prints "circular-buffer ... Overflow!" to stderr if segments pile up).
+    #[test]
+    fn long_muted_speech_is_flushed() {
+        let tts = crate::tts::Speaker::new().expect("tts unavailable");
+        let rs = sherpa_onnx::LinearResampler::create(24_000, 16_000).unwrap();
+        let mut stt = Stt::new().expect("models missing");
+        let said = "This is a long reply that keeps going without any real pause between the sentences so the detector sees one continuous stretch of speech. ".repeat(4);
+        let audio = rs.resample(&tts.synth(&said), true);
+        assert!(audio.len() > 16_000 * 12, "need >12 s of speech, got {}", audio.len() / 16_000);
+        for c in audio.chunks(1600) {
+            stt.push(c, true);
+        }
     }
 }

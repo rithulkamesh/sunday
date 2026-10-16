@@ -38,6 +38,9 @@ export function Overlay() {
         // The arrow comes in from the upper left and stops at the item's edge.
         const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
         const tail = { x: Math.max(20, cx - 170), y: Math.max(20, cy - 120) };
+        // The label sits above its mark, or below it near the top edge, so it never covers what it points at.
+        const above = r.y >= 44;
+        const ly = above ? r.y - 34 : r.y + r.h + 10;
         return (
           <g key={i}>
             {m.kind === "box" && <rect x={r.x - 4} y={r.y - 4} width={r.w + 8} height={r.h + 8} rx={10} {...common} fill="#7dd3fc14" />}
@@ -46,8 +49,8 @@ export function Overlay() {
             {m.kind === "arrow" && <line x1={tail.x} y1={tail.y} x2={r.x + r.w * 0.1} y2={r.y + r.h * 0.1} {...common} strokeLinecap="round" markerEnd="url(#head)" />}
             {m.label && (
               <g className="mark" style={{ animationDelay: delay }}>
-                <rect x={Math.min(r.x, size.w - 200)} y={Math.max(4, r.y - 34)} width={m.label.length * 8.4 + 20} height={26} rx={13} fill="#0a0a0acc" stroke={INK} />
-                <text x={Math.min(r.x, size.w - 200) + 10} y={Math.max(4, r.y - 34) + 18} fill="#fff" fontSize="14" fontFamily="IBM Plex Sans, system-ui">
+                <rect x={Math.min(r.x, size.w - 200)} y={ly} width={m.label.length * 8.4 + 20} height={26} rx={13} fill="#0a0a0acc" stroke={INK} />
+                <text x={Math.min(r.x, size.w - 200) + 10} y={ly + 18} fill="#fff" fontSize="14" fontFamily="IBM Plex Sans, system-ui">
                   {m.label}
                 </text>
               </g>
