@@ -14,8 +14,12 @@ type Diag = {
   skills: number;
   stt_models: boolean;
   ocr: boolean;
+  embed_model: string;
+  embed_installed: boolean;
+  facts: number;
 };
 
+type Flags = { web: boolean; learn_chat: boolean; chrome: string | null };
 type Voice = { enrolled: boolean; model: boolean; target: number };
 type VoiceEvent = { state: "enrolling" | "enrolled" | "cancelled" | "cleared" | "error"; secs?: number; target?: number; message?: string };
 
@@ -25,6 +29,10 @@ export function Settings() {
   const [models, setModels] = useState<string[]>([]);
   const [voice, setVoice] = useState<Voice | null>(null);
   const [ev, setEv] = useState<VoiceEvent | null>(null);
+  const [flags, setFlags] = useState<Flags | null>(null);
+  const loadFlags = () => void invoke<Flags>("flags").then(setFlags);
+  const setFlag = (key: string, on: boolean) => void invoke("set_flag", { key, on }).then(loadFlags);
+  useEffect(loadFlags, []);
   const refresh = () => {
     void invoke<Diag>("diagnostics").then(setD);
     void invoke<string[]>("models").then(setModels);
@@ -65,6 +73,27 @@ export function Settings() {
         <span className="text-sm text-dim">Used for chat, quizzes, grading and skills. Smaller is faster.</span>
       </div>
 
+      <Label>Privacy</Label>
+      <div className="mb-8 max-w-xl space-y-3 text-sm">
+        <label className="flex items-start gap-3">
+          <input type="checkbox" className="mt-1" checked={flags?.web ?? false} onChange={(e) => setFlag("web", e.target.checked)} />
+          <span>
+            Allow web access
+            <span className="block text-dim">
+              Lets Sunday read pages and search the web when you ask. Nothing is fetched otherwise. Pages that need JavaScript use headless Chrome
+              {flags?.chrome ? "" : " (none found: install Google Chrome for those)"}.
+            </span>
+          </span>
+        </label>
+        <label className="flex items-start gap-3">
+          <input type="checkbox" className="mt-1" checked={flags?.learn_chat ?? true} onChange={(e) => setFlag("learn_chat", e.target.checked)} />
+          <span>
+            Learn from conversations
+            <span className="block text-dim">When you say goodbye, lasting facts about you are saved as unconfirmed guesses you can review in Memory.</span>
+          </span>
+        </label>
+      </div>
+
       <Label>Your voice</Label>
       <div className="mb-8 max-w-xl">
         <p className="mb-3 text-sm text-dim">
@@ -100,6 +129,7 @@ export function Settings() {
           <Row ok={d.ollama} name="Ollama running" note="not reachable: start Ollama" />
           <Row ok={d.model_installed} name={`Model ${d.model}`} note={`run: ollama pull ${d.model}`} />
           <Row ok={d.vision_installed} name={`Vision model ${d.vision_model} (screen)`} note={`run: ollama pull ${d.vision_model}`} />
+          <Row ok={d.embed_installed} name={`Memory search model ${d.embed_model} · ${d.facts} facts`} note={`run: ollama pull ${d.embed_model}`} />
           <Row ok={d.ocr} name="Screen text reader (exact pointing)" note="run scripts/build-ocr.sh" />
           <Row ok={d.stt_models} name="Speech models" note="run scripts/fetch-models.sh" />
           <Row ok={d.concepts > 0} name={`Syllabus · ${d.concepts} concepts`} />

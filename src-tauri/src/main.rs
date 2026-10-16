@@ -516,7 +516,56 @@ fn diagnostics(db: tauri::State<Arc<db::Db>>) -> serde_json::Value {
         "concepts": db.graph().len(), "notes": db.docs().len(), "skills": db.skills().len(),
         "stt_models": std::path::Path::new(&models::path("silero_vad.onnx")).exists(),
         "ocr": models::dir().parent().is_some_and(|p| p.join("bin/ocr").exists()),
+        "embed_model": memory::embed_model(), "embed_installed": installed.iter().any(|m| m.starts_with(&memory::embed_model())),
+        "facts": db.facts(100_000).len(),
     })
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn memory_list(limit: i64, db: tauri::State<Arc<db::Db>>) -> Vec<db::Fact> {
+    db.facts(limit)
+}
+
+/// Facts by meaning, best first (embeds the query, so it can take a moment).
+#[cfg(feature = "voice")]
+#[tauri::command(async)]
+fn memory_search(query: String, db: tauri::State<Arc<db::Db>>) -> Vec<db::Fact> {
+    memory::recall(&db, &query, 20)
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn memory_delete(id: i64, db: tauri::State<Arc<db::Db>>) {
+    db.fact_delete(id);
+}
+
+/// Forget everything learned from one source: a page's address, "you", or "chat".
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn memory_delete_source(source: String, db: tauri::State<Arc<db::Db>>) -> usize {
+    db.facts_delete_source(&source)
+}
+
+/// What Sunday may do beyond the machine. The web is off until switched on; learning from conversations is on.
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn flags(db: tauri::State<Arc<db::Db>>) -> serde_json::Value {
+    serde_json::json!({
+        "web": db.kv_get("web").as_deref() == Some("on"),
+        "learn_chat": db.kv_get("learn_chat").as_deref() != Some("off"),
+        "chrome": web::chrome_path().map(|p| p.to_string_lossy().into_owned()),
+    })
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn set_flag(key: String, on: bool, db: tauri::State<Arc<db::Db>>) -> Result<(), String> {
+    if !["web", "learn_chat"].contains(&key.as_str()) {
+        return Err(format!("unknown setting {key}"));
+    }
+    db.kv_set(&key, if on { "on" } else { "off" });
+    Ok(())
 }
 
 #[cfg(feature = "voice")]
@@ -570,6 +619,18 @@ fn main() {
             study_state,
             #[cfg(feature = "voice")]
             graph,
+            #[cfg(feature = "voice")]
+            memory_list,
+            #[cfg(feature = "voice")]
+            memory_search,
+            #[cfg(feature = "voice")]
+            memory_delete,
+            #[cfg(feature = "voice")]
+            memory_delete_source,
+            #[cfg(feature = "voice")]
+            flags,
+            #[cfg(feature = "voice")]
+            set_flag,
             #[cfg(feature = "voice")]
             enroll_voice,
             #[cfg(feature = "voice")]

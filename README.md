@@ -33,6 +33,13 @@ It knows what's going on, not just what's visible: which app and window is in fr
 Diagrams get a closer look: if the first pass sees a diagram, chart or figure it says so, crops that region at full resolution, reads its labels, and explains how the parts connect, drawing arrows between them ("Client → Load Balancer → Server A").
 Pointing at text is exact: macOS's text recogniser (`scripts/ocr.swift`) finds every line's box, the model just picks line numbers. Only for non-text things (diagrams, icons) does it use the model's own coordinates, which are approximate. Only on request; the image is read once, sent to local Ollama only, and deleted. Needs Screen Recording permission. A look takes ~25 s; a diagram with a closer look, up to a minute.
 
+**Memory and the web.** Long-term memory is a store of atomic facts, each with where it came from (you told me / read on a page / inferred from a conversation),
+its confidence, and when it refers to; recalled by meaning (local embeddings) and cited in answers. The design follows Devsper's memory service (`devsper/flow/svc/memory`).
+"Remember that …" stores what you said. With **web access switched on** (Settings; off by default): "learn this page" reads the tab in your front browser,
+"read https://…" reads a link, "research X" searches the web, reads the top results in parallel and answers with sources. Pages are fetched safely (public addresses only,
+re-checked on every redirect, size-capped), with Readability for the main text and headless Chrome for JavaScript-only pages. What it reads is extracted into facts in the background.
+When you say goodbye, lasting facts about you are saved as unconfirmed guesses. All of it is listed in Memory and deletable per fact or per page.
+
 **Skills.** Versioned, prompt-only capabilities (a template, an output schema, tests). No generated code, no tools.
 Lifecycle: proposed → experimental → approved; approval needs a passing test run on that version; any approved version can be rolled back.
 Describe one in the Skills view and the model drafts it. Voice: "run skill study.mnemonic on the OSI model".
@@ -48,7 +55,7 @@ Voice details: "Sunday" or fn wakes it; say "stop", talk over it, or press fn to
 
 ## Models
 
-Defaults: `qwen3:4b` (text) and `qwen3-vl:4b-instruct` (screen, ~10 s per look once warm). Override with `SUNDAY_MODEL` / `SUNDAY_VISION`, or pick in Settings / ⌘K.
+Defaults: `qwen3:4b-instruct` (text), `qwen3-vl:4b-instruct` (screen, ~10 s per look once warm) and `nomic-embed-text-v2-moe` (memory search). Use the `-instruct` builds: plain `qwen3:4b` and `qwen3-vl:4b` are thinking builds that ignore `think:false` and leak their reasoning into replies. Override with `SUNDAY_MODEL` / `SUNDAY_VISION` / `SUNDAY_EMBED`, or pick in Settings / ⌘K.
 The plain `qwen3-vl:4b` is a thinking model and roughly twice as slow; Sunday can read either.
 
 ## Not built yet

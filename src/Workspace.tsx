@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Knowledge, importNotes } from "./Knowledge";
+import { Memory } from "./Memory";
 import { Palette, type Cmd, type View } from "./Palette";
 import { Settings } from "./Settings";
 import { Skills } from "./Skills";
@@ -81,6 +82,10 @@ export function Workspace() {
     { title: "Search local notes…", arg: "Search for", run: (c) => c && ask(`search my notes for ${c}`, false) },
     { title: "Explain what's on my screen", hint: "reads and draws", run: () => ask("explain what's on my screen", true) },
     { title: "Clear drawing on screen", run: () => ask("clear the screen", false) },
+    { title: "Remember…", arg: "Remember that…", run: (t) => t && ask(`remember that ${t}`, false) },
+    { title: "Read a web page…", arg: "Web address", hint: "web access", run: (u) => u && ask(`read ${u}`, false) },
+    { title: "Research…", arg: "What should I look up?", hint: "web access", run: (q) => q && ask(`research ${q}`) },
+    { title: "Go to Memory", run: () => setView("memory") },
     { title: "Import notes", run: () => { setView("knowledge"); void importNotes(); } },
     { title: "Go to Study", run: () => setView("study") },
     { title: "Go to Knowledge", run: () => setView("knowledge") },
@@ -98,7 +103,7 @@ export function Workspace() {
   };
 
   const acc = state?.total ? Math.round((100 * state.correct) / state.total) : null;
-  const NAV: [View, string][] = [["study", "Study"], ["knowledge", "Knowledge"], ["skills", "Skills"], ["settings", "Settings"]];
+  const NAV: [View, string][] = [["study", "Study"], ["knowledge", "Knowledge"], ["memory", "Memory"], ["skills", "Skills"], ["settings", "Settings"]];
 
   return (
     <div className="flex h-full bg-canvas">
@@ -178,6 +183,7 @@ export function Workspace() {
 
       <main className="flex min-w-0 flex-1 flex-col">
         {view === "knowledge" && <Knowledge onAsk={(t) => ask(t)} />}
+        {view === "memory" && <Memory onAsk={(t) => ask(t)} />}
         {view === "skills" && <Skills />}
         {view === "settings" && <Settings />}
         {view === "study" && (

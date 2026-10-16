@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-export type View = "study" | "knowledge" | "skills" | "settings";
+export type View = "study" | "knowledge" | "memory" | "skills" | "settings";
 /** `arg` is the prompt for a value to ask for first; `run` then receives it. */
 export type Cmd = { title: string; hint?: string; run: (arg?: string) => void; arg?: string };
 
