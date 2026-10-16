@@ -232,7 +232,7 @@ fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
         }
         (Action::Screen(task), _) => {
             // Sentences are spoken as they're produced; `spoken` says whether that already happened.
-            let r = crate::screen::explain(&c.hud.app, c.db, &task, &|msg| {
+            let r = crate::screen::explain(&c.hud.app, c.db, &task, true, &|msg| {
                 say(c, msg);
             }, &|| tts::epoch() != c.ep)?;
             if !r.marks.is_empty() {
@@ -252,7 +252,7 @@ fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
 /// Runs one stretch of the agent loop and speaks where it ended: the result, or the question it needs a yes to.
 fn act(c: &Ctx, run: impl FnOnce(&dyn Fn(&crate::agent::State) -> Res<crate::agent::Step>, &crate::agent::Eyes) -> Res<crate::agent::Out>) -> Res<String> {
     let plan = crate::agent::model_plan(c.model);
-    let look = |t: &str| crate::screen::explain(&c.hud.app, c.db, t, &|_| {}, &|| tts::epoch() != c.ep).map(|r| r.text).map_err(|e| e.to_string());
+    let look = |t: &str| crate::screen::explain(&c.hud.app, c.db, t, false, &|_| {}, &|| tts::epoch() != c.ep).map(|r| r.text).map_err(|e| e.to_string());
     let locate = |t: &str| {
         let (x, y) = crate::screen::locate(c.db, t).map_err(|e| e.to_string())?;
         crate::screen::preview(&c.hud.app, x, y, t);
@@ -422,7 +422,7 @@ pub fn run_skill(db: &Db, model: &str, id: &str, version: Option<i64>, input: &s
 
 /// Structured output: the schema constrains the model, serde validates, one retry, then give up.
 pub fn json<T: DeserializeOwned>(model: &str, system: &str, user: &str, schema: Value, timeout_s: u64) -> Res<T> {
-    let body = json!({"model": model, "stream": false, "think": false, "keep_alive": KEEP_TEXT, "format": schema,
+    let body = json!({"model": model, "stream": false, "think": false, "keep_alive": KEEP_TEXT, "format": schema, "options": {"temperature": 0},
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]});
     for _ in 0..2 {
         let v: Value = ureq::post(URL).timeout(std::time::Duration::from_secs(timeout_s)).send_json(&body)?.into_json()?;

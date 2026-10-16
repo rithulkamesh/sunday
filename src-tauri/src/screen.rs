@@ -560,7 +560,7 @@ fn drop_chrome(mut lines: Vec<Line>, task: &str) -> Vec<Line> {
 
 /// The whole pipeline on one screenshot file. Marks come back in display coordinates.
 /// A diagram gets a second, closer look at full resolution; `progress` says so while that runs.
-fn analyse(full: &Path, context: &str, category: &str, region: Region, task: &str, text_model: &str, model: &str, progress: &dyn Fn(&str), cancelled: &dyn Fn() -> bool) -> Res<Explained> {
+fn analyse(full: &Path, context: &str, category: &str, region: Region, task: &str, text_model: &str, model: &str, vision: bool, progress: &dyn Fn(&str), cancelled: &dyn Fn() -> bool) -> Res<Explained> {
     let t = std::time::Instant::now();
     let mut seen = view(full, region, MAX_EDGE)?;
     if region == Region::WHOLE {
@@ -568,7 +568,7 @@ fn analyse(full: &Path, context: &str, category: &str, region: Region, task: &st
     }
     eprintln!("[perf] screen: read the text in {:?} ({} lines)", t.elapsed(), seen.lines.len());
 
-    if !needs_vision(task, &seen.lines, category) {
+    if !(vision && needs_vision(task, &seen.lines, category)) {
         let t = std::time::Instant::now();
         match look_text(text_model, &prompt(task, context, &seen.lines), progress, cancelled) {
             Ok((text, marks)) => {
@@ -591,7 +591,8 @@ fn analyse(full: &Path, context: &str, category: &str, region: Region, task: &st
 }
 
 /// Looks at the screen for `task`. Returns the spoken explanation and the marks to draw.
-pub fn explain(app: &AppHandle, db: &Db, task: &str, progress: &dyn Fn(&str), cancelled: &dyn Fn() -> bool) -> Res<Explained> {
+/// `vision`: may use the (slow) vision model when the screen is mostly a picture; the agent reading a page for its next step says no.
+pub fn explain(app: &AppHandle, db: &Db, task: &str, vision: bool, progress: &dyn Fn(&str), cancelled: &dyn Fn() -> bool) -> Res<Explained> {
     // Don't photograph our own drawing: only if one is up, and then wait for the compositor to drop it.
     if app.get_webview_window("overlay").and_then(|w| w.is_visible().ok()).unwrap_or(false) {
         clear(app);
@@ -608,7 +609,7 @@ pub fn explain(app: &AppHandle, db: &Db, task: &str, progress: &dyn Fn(&str), ca
     let region = desk.as_ref().filter(|_| wants_window(task)).and_then(Desk::front_window).filter(|r| r.area() > 0.05).unwrap_or(Region::WHOLE);
     let full = grab()?;
     eprintln!("[perf] screen: captured in {:?}", t0.elapsed());
-    let res = analyse(&full, &context, &category, region, task, &llm::model_name(db), &llm::vision_model(db), progress, cancelled);
+    let res = analyse(&full, &context, &category, region, task, &llm::model_name(db), &llm::vision_model(db), vision, progress, cancelled);
     let _ = std::fs::remove_file(&full);
     eprintln!("[perf] screen: total {:?}", t0.elapsed());
     res
@@ -783,13 +784,13 @@ mod tests {
         let task = std::env::var("SUNDAY_TEST_TASK").unwrap_or_else(|_| "What is on my screen? Point at the most important thing.".into());
         let t = std::time::Instant::now();
         let text = match std::env::var("SUNDAY_TEST_IMAGE") {
-            Ok(img) => analyse(Path::new(&img), "", "", Region::WHOLE, &task, &text_model, &model, &|m| println!("[{:?}] {m}", t.elapsed()), &|| false).expect("analyse"),
+            Ok(img) => analyse(Path::new(&img), "", "", Region::WHOLE, &task, &text_model, &model, true, &|m| println!("[{:?}] {m}", t.elapsed()), &|| false).expect("analyse"),
             Err(_) => {
                 let d = desk();
                 let ctx = d.as_ref().map(Desk::context).unwrap_or_default();
                 let full = grab().expect("grab");
                 let cat = d.as_ref().map(Desk::front_category).unwrap_or_default();
-                let r = analyse(&full, &ctx, &cat, Region::WHOLE, &task, &text_model, &model, &|m| println!("[{:?}] {m}", t.elapsed()), &|| false);
+                let r = analyse(&full, &ctx, &cat, Region::WHOLE, &task, &text_model, &model, true, &|m| println!("[{:?}] {m}", t.elapsed()), &|| false);
                 let _ = std::fs::remove_file(&full);
                 r.expect("analyse")
             }

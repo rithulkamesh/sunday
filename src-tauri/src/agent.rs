@@ -172,7 +172,7 @@ pub fn drive(db: &Db, st: &mut State, plan: &dyn Fn(&State) -> Res<Step>, eyes: 
         if s.tool == "finish" {
             return Ok(finish(db, st, if s.say.trim().is_empty() { "Done." } else { s.say.trim() }));
         }
-        let key = format!("{}|{}", s.tool, match s.tool.as_str() { "open_app" => &s.name, "open_url" => &s.url, "open_path" => &s.path, "type_text" => &s.text, _ => &s.query });
+        let key = format!("{}|{}", s.tool, match s.tool.as_str() { "open_app" => &s.name, "open_url" => &s.url, "open_path" => &s.path, "type_text" => &s.text, "look_at_screen" => "", _ => &s.query });
         if st.done.contains(&key) {
             return Ok(finish(db, st, if s.say.trim().is_empty() { "Done." } else { s.say.trim() }));
         }
