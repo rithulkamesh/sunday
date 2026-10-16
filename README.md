@@ -7,7 +7,7 @@ Silero VAD + wake-word spotter + Parakeet (speech in), Ollama (thinking), Kokoro
 
 ```sh
 scripts/fetch-models.sh     # once: speech models into ~/.cache/sunday/models
-scripts/build-ocr.sh        # once: exact screen-text reader for pointing (needs Xcode command line tools)
+scripts/build-ocr.sh        # once, and again after updates: screen helper (exact text boxes, window list, cropping); needs Xcode command line tools
 ollama pull gemma4          # or: SUNDAY_MODEL=<any ollama model>
 bun install && bun run tauri dev
 ```
@@ -29,7 +29,9 @@ Chat answers quote them ("from your notes on …") and show the sources; quizzes
 
 **Screen.** "Explain what's on my screen", "what is this question", "point to …": takes one screenshot, a local vision model
 explains it, Sunday speaks, and boxes/circles/arrows are drawn on a click-through overlay for 25 s ("clear the screen" removes them).
-Pointing at text is exact: macOS's text recogniser (`scripts/ocr.swift`) finds every line's box, the model just picks line numbers. Only for non-text things (diagrams, icons) does it use the model's own coordinates, which are approximate. Only on request; the image is read once, sent to local Ollama only, and deleted. Needs Screen Recording permission. A look takes ~25 s.
+It knows what's going on, not just what's visible: which app and window is in front and what else is open (from the macOS window list, no extra permission), and "explain this page / window / PDF" looks at just the front window.
+Diagrams get a closer look: if the first pass sees a diagram, chart or figure it says so, crops that region at full resolution, reads its labels, and explains how the parts connect, drawing arrows between them ("Client → Load Balancer → Server A").
+Pointing at text is exact: macOS's text recogniser (`scripts/ocr.swift`) finds every line's box, the model just picks line numbers. Only for non-text things (diagrams, icons) does it use the model's own coordinates, which are approximate. Only on request; the image is read once, sent to local Ollama only, and deleted. Needs Screen Recording permission. A look takes ~25 s; a diagram with a closer look, up to a minute.
 
 **Skills.** Versioned, prompt-only capabilities (a template, an output schema, tests). No generated code, no tools.
 Lifecycle: proposed → experimental → approved; approval needs a passing test run on that version; any approved version can be rolled back.

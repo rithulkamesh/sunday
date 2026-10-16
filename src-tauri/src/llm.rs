@@ -174,7 +174,10 @@ fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
             crate::screen::clear(&c.hud.app);
             Ok(say(c, "Cleared."))
         }
-        (Action::Screen(task), _) => crate::screen::explain(&c.hud.app, c.db, &task).map(|(text, marks)| {
+        (Action::Screen(task), _) => crate::screen::explain(&c.hud.app, c.db, &task, &|msg| {
+            say(c, msg);
+        })
+        .map(|(text, marks)| {
             if !marks.is_empty() {
                 crate::screen::show(&c.hud.app, &marks, 25);
             }
