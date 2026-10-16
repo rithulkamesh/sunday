@@ -42,6 +42,9 @@ impl Speaker {
         };
         let tts = OfflineTts::create(&config)?;
         let rate = tts.sample_rate() as u32;
+        // The first synthesis is slow (lazy init); pay for it now instead of on the first reply.
+        let none: Option<fn(&[f32], f32) -> bool> = None;
+        let _ = tts.generate_with_config("Hi.", &GenerationConfig { sid: 0, speed: 1.0, ..Default::default() }, none);
 
         let dev = cpal::default_host().default_output_device()?;
         let mut cfg = dev.default_output_config().ok()?.config();
@@ -101,4 +104,21 @@ pub fn spawn() -> std::sync::mpsc::Sender<Cmd> {
         }
     });
     tx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Needs the models from scripts/fetch-models.sh. Prints synthesis time vs audio length.
+    #[test]
+    fn synthesis_speed() {
+        let s = Speaker::new().expect("tts unavailable");
+        for text in ["Hello there.", "I can answer questions, write different kinds of creative text, and help you with information.", "Just let me know what you need."] {
+            let t = Instant::now();
+            s.speak(text);
+            let wait = UNTIL.lock().unwrap().unwrap().saturating_duration_since(Instant::now());
+            println!("synth {:?} for {:?} of audio: {text}", t.elapsed(), wait);
+        }
+    }
 }
