@@ -18,6 +18,8 @@ mod notes;
 #[cfg(feature = "voice")]
 mod models;
 #[cfg(feature = "voice")]
+mod speaker;
+#[cfg(feature = "voice")]
 mod study;
 #[cfg(feature = "voice")]
 mod stt;
@@ -205,11 +207,38 @@ fn listen(hud: Hud) {
         let (mut barge, mut mic_level) = (bargein::BargeIn::default(), 0.0f32);
         #[cfg(feature = "voice")]
         let reply = app.state::<Reply>().0.lock().unwrap().clone();
+        #[cfg(feature = "voice")]
+        let (db, ctl) = (app.state::<Arc<db::Db>>().inner().clone(), app.state::<ControlRx>().0.lock().unwrap().take());
+        // The owner's voiceprint, if they've enrolled.
+        #[cfg(feature = "voice")]
+        if let Some(s) = stt.as_mut() {
+            s.set_voiceprint(db.kv_get("voiceprint").and_then(|j| serde_json::from_str(&j).ok()));
+        }
         for chunk in rx {
             let rms = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len().max(1) as f32).sqrt();
             let _ = app.emit("level", rms * 8.0);
             #[cfg(feature = "voice")]
             if let Some(s) = stt.as_mut() {
+                while let Some(Ok(c)) = ctl.as_ref().map(|r| r.try_recv()) {
+                    match c {
+                        Ctl::Enroll => {
+                            s.start_enroll();
+                            hud.wake();
+                            let _ = app.emit("transcript", "Learning your voice: keep talking…");
+                            let _ = app.emit("voice", serde_json::json!({"state": "enrolling", "secs": 0.0, "target": speaker::ENROLL_SECS}));
+                        }
+                        Ctl::CancelEnroll => {
+                            s.cancel_enroll();
+                            let _ = app.emit("voice", serde_json::json!({"state": "cancelled"}));
+                        }
+                        Ctl::Forget => {
+                            s.cancel_enroll();
+                            s.set_voiceprint(None);
+                            db.kv_set("voiceprint", "");
+                            let _ = app.emit("voice", serde_json::json!({"state": "cleared"}));
+                        }
+                    }
+                }
                 let fn_held = fn_down();
                 let mut muted = tts::speaking(); // our own voice: only the keyword spotter listens
                 if muted && fn_held {
@@ -221,10 +250,16 @@ fn listen(hud: Hud) {
                     let ms = chunk.len() as f32 / 16.0;
                     mic_level += 0.5 * (rms - mic_level);
                     if barge.over(mic_level, tts::playback_level(), ms, s.voiced()) {
-                        eprintln!("[stt] barge-in (voice) echo ratio {:.2}", barge.ratio());
-                        tts::interrupt();
-                        hud.wake();
-                        muted = false;
+                        let sim = s.recent_sim();
+                        if s.is_owner(sim, true) == Some(false) {
+                            eprintln!("[stt] someone else is talking over me (voice match {:.2}), carrying on", sim.unwrap_or(0.0));
+                            barge.reject();
+                        } else {
+                            eprintln!("[stt] barge-in (voice) echo ratio {:.2}, voice match {sim:?}", barge.ratio());
+                            tts::interrupt();
+                            hud.wake();
+                            muted = false;
+                        }
                     }
                 } else {
                     barge.reset();
@@ -234,15 +269,23 @@ fn listen(hud: Hud) {
                 }
                 for heard in s.push(&chunk, muted) {
                     match heard {
-                        stt::Heard::Interim(t) => {
-                            if !tts::is_echo(&t) {
-                                drop(on_speech(&hud, &t, false));
+                        stt::Heard::Interim(t, sim) => {
+                            // Not the owner, or can't tell yet outside a conversation: don't show or react.
+                            let owner = s.is_owner(sim, false);
+                            if owner == Some(false) || (owner.is_none() && !hud.woken()) || tts::is_echo(&t) {
+                                continue;
                             }
+                            drop(on_speech(&hud, &t, false));
                         }
-                        stt::Heard::Final(t) => {
-                            eprintln!("[stt] {t:?}");
+                        stt::Heard::Final(t, sim) => {
+                            let owner = s.is_owner(sim, false);
+                            eprintln!("[stt] {t:?}{}", sim.map_or(String::new(), |v| format!(" (voice match {v:.2})")));
                             if tts::is_echo(&t) {
                                 eprintln!("[stt] ignored: our own voice coming back");
+                                continue;
+                            }
+                            if owner == Some(false) || (owner.is_none() && !hud.woken()) {
+                                eprintln!("[stt] ignored: not your voice");
                                 continue;
                             }
                             if hud.woken() && stt::is_goodbye(&t) {
@@ -256,8 +299,12 @@ fn listen(hud: Hud) {
                                 let _ = reply.send(llm::Turn { text: q, voice: true });
                             }
                         }
-                        stt::Heard::Keyword(k) => {
-                            eprintln!("[stt] keyword {k:?} muted={muted}");
+                        stt::Heard::Keyword(k, sim) => {
+                            eprintln!("[stt] keyword {k:?} muted={muted}{}", sim.map_or(String::new(), |v| format!(" voice match {v:.2}")));
+                            if s.is_owner(sim, muted) == Some(false) {
+                                eprintln!("[stt] ignored: not your voice");
+                                continue;
+                            }
                             if muted {
                                 tts::interrupt();
                             }
@@ -265,11 +312,70 @@ fn listen(hud: Hud) {
                                 hud.wake(); // show the HUD now, before the model has loaded
                             }
                         }
+                        stt::Heard::Enrolling(secs) => {
+                            hud.touch();
+                            let _ = app.emit("transcript", format!("Learning your voice… {secs:.0} of {:.0} s", speaker::ENROLL_SECS));
+                            let _ = app.emit("voice", serde_json::json!({"state": "enrolling", "secs": secs, "target": speaker::ENROLL_SECS}));
+                        }
+                        stt::Heard::Enrolled(result) => {
+                            let (say, event) = match result {
+                                Ok(print) => {
+                                    db.kv_set("voiceprint", &serde_json::to_string(&print).unwrap_or_default());
+                                    ("Got it. I'll know your voice now.".to_string(), serde_json::json!({"state": "enrolled"}))
+                                }
+                                Err(e) => (format!("That didn't work: {e}."), serde_json::json!({"state": "error", "message": e})),
+                            };
+                            let _ = app.emit("voice", event);
+                            let _ = app.emit("transcript", say.clone());
+                            hud.touch();
+                            tts::say(&app.state::<Tts>().0.lock().unwrap(), say, tts::epoch());
+                        }
                     }
                 }
             }
         }
     });
+}
+
+/// Orders to the listening thread, which owns the speech pipeline.
+#[cfg(feature = "voice")]
+pub enum Ctl {
+    Enroll,
+    CancelEnroll,
+    Forget,
+}
+#[cfg(feature = "voice")]
+struct Control(Mutex<std::sync::mpsc::Sender<Ctl>>);
+#[cfg(feature = "voice")]
+struct ControlRx(Mutex<Option<std::sync::mpsc::Receiver<Ctl>>>);
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn enroll_voice(c: tauri::State<Control>) {
+    let _ = c.0.lock().unwrap().send(Ctl::Enroll);
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn cancel_enroll(c: tauri::State<Control>) {
+    let _ = c.0.lock().unwrap().send(Ctl::CancelEnroll);
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn forget_voice(c: tauri::State<Control>) {
+    let _ = c.0.lock().unwrap().send(Ctl::Forget);
+}
+
+/// Whether a voiceprint is saved, and whether the speaker model is installed.
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn voice_status(db: tauri::State<Arc<db::Db>>) -> serde_json::Value {
+    serde_json::json!({
+        "enrolled": db.kv_get("voiceprint").is_some_and(|v| !v.is_empty()),
+        "model": std::path::Path::new(&models::path("wespeaker_en_voxceleb_resnet34_LM.onnx")).exists(),
+        "target": speaker::ENROLL_SECS,
+    })
 }
 
 #[cfg(feature = "voice")]
@@ -460,6 +566,14 @@ fn main() {
             #[cfg(feature = "voice")]
             graph,
             #[cfg(feature = "voice")]
+            enroll_voice,
+            #[cfg(feature = "voice")]
+            cancel_enroll,
+            #[cfg(feature = "voice")]
+            forget_voice,
+            #[cfg(feature = "voice")]
+            voice_status,
+            #[cfg(feature = "voice")]
             skills,
             #[cfg(feature = "voice")]
             skill_run,
@@ -509,6 +623,9 @@ fn main() {
                 let reply = llm::spawn(hud.clone(), tts_tx, db.clone());
                 app.manage(db);
                 app.manage(Reply(Mutex::new(reply)));
+                let (ctl_tx, ctl_rx) = std::sync::mpsc::channel();
+                app.manage(Control(Mutex::new(ctl_tx)));
+                app.manage(ControlRx(Mutex::new(Some(ctl_rx))));
             }
             watch_fn(hud.clone());
             listen(hud);

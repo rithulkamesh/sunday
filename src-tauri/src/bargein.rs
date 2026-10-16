@@ -48,6 +48,11 @@ impl BargeIn {
         self.hot_ms >= HOLD_MS
     }
 
+    /// The talker turned out not to be the owner: wait for a fresh stretch of speech before asking again.
+    pub fn reject(&mut self) {
+        self.hot_ms = 0.0;
+    }
+
     pub fn ratio(&self) -> f32 {
         self.ratio
     }

@@ -40,6 +40,8 @@ permitted. `Rules` is the deterministic router; the `Decider` trait is where a s
 
 **⌘K** command palette; **Settings** has the model picker and a diagnostics checklist.
 
+**Your voice.** "Learn my voice" (say it, or Settings / ⌘K) records ~20 s of you, builds a voiceprint (wespeaker ResNet34, on-device) and from then on Sunday ignores other voices: wake word, commands and talking-over-it all have to match you. The fn key always works. Logs show `voice match 0.xx` so the threshold (`speaker::SAME`) can be tuned. "Forget my voice" removes it.
+
 Voice details: "Sunday" or fn wakes it; say "stop", talk over it, or press fn to interrupt; "bye" ends the session and unloads the speech model.
 
 ## Models

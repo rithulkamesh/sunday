@@ -19,6 +19,9 @@ pub enum Action {
     ClearScreen,
     /// Which of the user's notes mention this?
     Notes(String),
+    /// Learn / forget the owner's voice.
+    LearnVoice,
+    ForgetVoice,
     /// Run an approved skill.
     Skill { id: String, input: String },
 }
@@ -39,6 +42,12 @@ impl Decider for Rules {
         let has = |ks: &[&str]| ks.iter().any(|k| t.contains(k));
         if has_pending && study::is_skip(text) {
             return Action::Skip;
+        }
+        if has(&[" learn my voice ", " remember my voice ", " learn my voice. ", " train on my voice ", " recognize my voice ", " recognise my voice "]) {
+            return Action::LearnVoice;
+        }
+        if has(&[" forget my voice ", " reset my voice ", " unlearn my voice "]) {
+            return Action::ForgetVoice;
         }
         if has(&[" clear the screen ", " clear my screen ", " clear that ", " erase that ", " hide that ", " clear the drawing ", " remove the drawing "]) {
             return Action::ClearScreen;
@@ -99,6 +108,8 @@ mod tests {
         assert!(matches!(d("Can you explain what's on my screen?", false), Screen(_)));
         assert!(matches!(d("explain this question", true), Screen(_))); // wins over answering
         assert_eq!(d("clear the screen", false), ClearScreen);
+        assert_eq!(d("Sunday, learn my voice", false), LearnVoice);
+        assert_eq!(d("forget my voice", false), ForgetVoice);
         assert_eq!(d("what do my notes say about deadlock", false), Notes("deadlock".into()));
         assert_eq!(d("run skill study.mnemonic on osi model", false), Skill { id: "study.mnemonic".into(), input: "osi model".into() });
     }

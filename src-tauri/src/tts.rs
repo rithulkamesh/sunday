@@ -139,7 +139,12 @@ impl Speaker {
 
     /// Synthesizes at the model's sample rate. Blocks for the synthesis time (RTF is well under 1).
     pub fn synth(&self, text: &str) -> Vec<f32> {
-        let cfg = GenerationConfig { sid: 0, speed: 1.0, ..Default::default() };
+        self.synth_sid(text, 0)
+    }
+
+    /// Same, in another of the model's voices (speaker id).
+    pub fn synth_sid(&self, text: &str, sid: i32) -> Vec<f32> {
+        let cfg = GenerationConfig { sid, speed: 1.0, ..Default::default() };
         let none: Option<fn(&[f32], f32) -> bool> = None;
         self.tts.generate_with_config(text, &cfg, none).map(|a| a.samples().to_vec()).unwrap_or_default()
     }

@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 type Res<T> = Result<T, Box<dyn std::error::Error>>;
 
@@ -161,6 +161,14 @@ fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
             let spoken = out.as_object().map(|o| o.values().filter_map(Value::as_str).collect::<Vec<_>>().join(". ")).unwrap_or_default();
             c.sources.borrow_mut().push(format!("skill {id} v{v}"));
             Ok(say(c, &spoken))
+        }
+        (Action::LearnVoice, _) => {
+            let _ = c.hud.app.state::<crate::Control>().0.lock().unwrap().send(crate::Ctl::Enroll);
+            Ok(say(c, "Okay. When I stop talking, tell me about what you studied today. I'll listen for about twenty seconds."))
+        }
+        (Action::ForgetVoice, _) => {
+            let _ = c.hud.app.state::<crate::Control>().0.lock().unwrap().send(crate::Ctl::Forget);
+            Ok(say(c, "Okay, I've forgotten your voice. I'll answer anyone now."))
         }
         (Action::ClearScreen, _) => {
             crate::screen::clear(&c.hud.app);

@@ -85,6 +85,8 @@ export function Workspace() {
     { title: "Go to Study", run: () => setView("study") },
     { title: "Go to Knowledge", run: () => setView("knowledge") },
     { title: "Go to Skills", run: () => setView("skills") },
+    { title: "Learn my voice", hint: "only answer to me", run: () => { setView("settings"); void invoke("enroll_voice"); } },
+    { title: "Forget my voice", run: () => void invoke("forget_voice") },
     { title: "Open diagnostics", run: () => setView("settings") },
   ];
 

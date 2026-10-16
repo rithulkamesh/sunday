@@ -2,6 +2,7 @@
 //! of MB) is loaded only after a wake word or fn, and dropped after IDLE. Once loaded it decodes
 //! the growing utterance every 0.2 s so words appear live, then once more when the VAD closes it.
 use crate::models::path;
+use crate::speaker::{self, Voice};
 use std::time::{Duration, Instant};
 use sherpa_onnx::{
     KeywordSpotter, KeywordSpotterConfig, OfflineRecognizer, OfflineRecognizerConfig, OnlineStream,
@@ -17,13 +18,18 @@ const KWS: &str = "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01";
 const KEYWORDS: &str = "▁SU N DAY @sunday\n▁ST O P @stop\n";
 const PARAKEET: &str = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8";
 
+/// Each speech event carries a similarity to the owner's voiceprint (None: not enrolled, or too little audio to tell).
 pub enum Heard {
     /// The utterance so far; will be superseded.
-    Interim(String),
+    Interim(String, Option<f32>),
     /// A finished utterance.
-    Final(String),
+    Final(String, Option<f32>),
     /// A wake/stop word was spotted ("sunday" or "stop"), even while muted.
-    Keyword(String),
+    Keyword(String, Option<f32>),
+    /// Seconds of speech collected so far while learning the owner's voice.
+    Enrolling(f32),
+    /// Learning finished: the voiceprint, or why it failed.
+    Enrolled(Result<Vec<f32>, String>),
 }
 
 /// A short sign-off ("bye", "okay goodbye", "that's all") ends the conversation.
@@ -71,6 +77,16 @@ fn decode(recognizer: &OfflineRecognizer, samples: &[f32]) -> String {
 
 pub struct Stt {
     vad: VoiceActivityDetector,
+    /// Speaker verification (None if its model isn't fetched) and the owner's voiceprint (None until enrolled).
+    voice: Option<Voice>,
+    print: Option<Vec<f32>>,
+    /// The last 3 s of mic audio, for judging whose voice a wake word was.
+    recent: Vec<f32>,
+    /// Speech collected for a voiceprint while enrolling.
+    enrolling: Option<Vec<f32>>,
+    /// Similarity for the utterance in progress, and the buffer length it was computed at.
+    utt_sim: Option<f32>,
+    sim_at: usize,
     voice_vad: VoiceActivityDetector,
     muted_rest: Vec<f32>, // samples not yet a full VAD window
     was_muted: bool,
@@ -110,6 +126,12 @@ impl Stt {
         let kws = load_kws()?;
         Some(Self {
             vad: VoiceActivityDetector::create(&vad, 60.0)?,
+            voice: Voice::new(),
+            print: None,
+            recent: Vec::new(),
+            enrolling: None,
+            utt_sim: None,
+            sim_at: 0,
             // Quicker to react; only used while muted, to tell voices from claps.
             voice_vad: VoiceActivityDetector::create(&vad_cfg(0.2, 0.1, 20.0), 5.0)?,
             muted_rest: Vec::new(),
@@ -140,6 +162,37 @@ impl Stt {
         eprintln!("[stt] cooled, model unloaded");
     }
 
+    pub fn set_voiceprint(&mut self, p: Option<Vec<f32>>) {
+        self.print = p;
+    }
+
+    pub fn start_enroll(&mut self) {
+        self.enrolling = Some(Vec::new());
+    }
+
+    pub fn cancel_enroll(&mut self) {
+        self.enrolling = None;
+    }
+
+    /// Is this the owner? Some(true/false) once a voiceprint exists and there was enough audio to judge;
+    /// None when unknown. `mixed`: Sunday's own voice was playing too, so the bar is lower.
+    pub fn is_owner(&self, sim: Option<f32>, mixed: bool) -> Option<bool> {
+        if self.print.is_none() {
+            return Some(true);
+        }
+        sim.map(|s| s >= if mixed { speaker::MIXED } else { speaker::SAME })
+    }
+
+    /// Similarity of the last 2 s of mic audio to the owner (for wake words and barge-in).
+    pub fn recent_sim(&self) -> Option<f32> {
+        let (v, p) = (self.voice.as_ref()?, self.print.as_ref()?);
+        v.similarity(p, &self.recent[self.recent.len().saturating_sub(2 * 16_000)..])
+    }
+
+    fn sim_of(&self, samples: &[f32]) -> Option<f32> {
+        self.voice.as_ref()?.similarity(self.print.as_ref()?, samples)
+    }
+
     /// Load the big model now (wake word or fn) and keep it for IDLE.
     pub fn warm(&mut self) {
         self.last_active = Instant::now();
@@ -148,19 +201,63 @@ impl Stt {
         }
     }
 
+    /// While learning a voice: keep only closed speech segments, report progress, and finish at ENROLL_SECS.
+    fn enroll_step(&mut self, mut out: Vec<Heard>) -> Vec<Heard> {
+        let mut closed = false;
+        while !self.vad.is_empty() {
+            if let (Some(seg), Some(e)) = (self.vad.front(), self.enrolling.as_mut()) {
+                let s = seg.samples();
+                if s.len() >= 9_600 {
+                    e.extend(s.iter().copied());
+                    out.push(Heard::Enrolling(e.len() as f32 / 16_000.0));
+                }
+            }
+            self.vad.pop();
+            closed = true;
+        }
+        if closed {
+            self.buf.clear();
+            self.fed = 0;
+            self.speaking = false;
+        } else if !self.speaking && self.buf.len() > 10 * WINDOW {
+            let drop = self.buf.len() - 10 * WINDOW;
+            self.buf.drain(..drop);
+            self.fed = self.fed.saturating_sub(drop);
+        }
+        if self.enrolling.as_ref().is_some_and(|e| e.len() as f32 / 16_000.0 >= speaker::ENROLL_SECS) {
+            let speech = self.enrolling.take().unwrap_or_default();
+            let r = match &self.voice {
+                Some(v) => v.enroll(&speech),
+                None => Err("the speaker model is missing: run scripts/fetch-models.sh".into()),
+            };
+            if let Ok(p) = &r {
+                self.print = Some(p.clone());
+            }
+            out.push(Heard::Enrolled(r));
+        }
+        out
+    }
+
     /// Feed 16 kHz mono samples; returns whatever was heard since the last call.
     /// `muted` (we're speaking): only the keyword spotter listens, so "stop" can barge in.
     pub fn push(&mut self, chunk: &[f32], muted: bool) -> Vec<Heard> {
         let mut out = Vec::new();
+        self.recent.extend_from_slice(chunk);
+        let extra = self.recent.len().saturating_sub(3 * 16_000);
+        self.recent.drain(..extra);
         self.kws_stream.accept_waveform(16_000, chunk);
         while self.kws.is_ready(&self.kws_stream) {
             self.kws.decode(&self.kws_stream);
             if let Some(r) = self.kws.get_result(&self.kws_stream).filter(|r| !r.keyword.is_empty()) {
                 self.kws.reset(&self.kws_stream);
-                if r.keyword == "sunday" && !muted {
+                if self.enrolling.is_some() {
+                    continue; // learning a voice: nothing else should react
+                }
+                let sim = self.recent_sim();
+                if r.keyword == "sunday" && !muted && self.is_owner(sim, false) != Some(false) {
                     self.warm();
                 }
-                out.push(Heard::Keyword(r.keyword));
+                out.push(Heard::Keyword(r.keyword, sim));
             }
         }
         if muted {
@@ -199,6 +296,11 @@ impl Stt {
         if self.vad.detected() && !self.speaking {
             self.speaking = true;
             self.since_interim = 0;
+            self.utt_sim = None;
+            self.sim_at = 0;
+        }
+        if self.enrolling.is_some() {
+            return self.enroll_step(out);
         }
 
         // Speech keeps a loaded model warm; it never loads one (only a wake word or fn does).
@@ -209,8 +311,13 @@ impl Stt {
         // Live words while the utterance is still going.
         if let (true, Some(rec)) = (self.speaking && self.since_interim >= INTERIM_EVERY, &self.recognizer) {
             let text = decode(rec, &self.buf);
+            // Whose voice is it so far? Re-judged as the utterance grows (needs ~0.75 s, uses the last 4 s).
+            if self.print.is_some() && self.buf.len() >= self.sim_at + 8_000 {
+                self.utt_sim = self.sim_of(&self.buf[self.buf.len().saturating_sub(4 * 16_000)..]);
+                self.sim_at = self.buf.len();
+            }
             if !text.is_empty() {
-                out.push(Heard::Interim(text));
+                out.push(Heard::Interim(text, self.utt_sim));
             }
             self.since_interim = 0;
         }
@@ -221,7 +328,8 @@ impl Stt {
             if let Some(seg) = self.vad.front() {
                 let text = self.recognizer.as_ref().map(|r| decode(r, seg.samples())).unwrap_or_default();
                 if !text.is_empty() {
-                    out.push(Heard::Final(text));
+                    let sim = self.sim_of(&seg.samples());
+                    out.push(Heard::Final(text, sim));
                 }
             }
             self.vad.pop();
@@ -261,12 +369,12 @@ mod tests {
             heard.extend(stt.push(chunk, false));
         }
         let finals: Vec<_> = heard.iter().filter_map(|h| match h {
-            Heard::Final(t) => Some(t.clone()),
+            Heard::Final(t, _) => Some(t.clone()),
             _ => None,
         }).collect();
         assert!(!finals.is_empty(), "no final transcript");
         println!("{finals:?}");
-        assert!(heard.iter().any(|h| matches!(h, Heard::Interim(_))), "no live words");
+        assert!(heard.iter().any(|h| matches!(h, Heard::Interim(..))), "no live words");
 
         // Goes cold after IDLE of silence, and wakes again on speech.
         assert!(stt.recognizer.is_some());
@@ -296,7 +404,7 @@ mod tests {
             audio.extend(rs.resample(&tts.synth(text), true));
             audio.extend(vec![0.0f32; 16_000]);
             let heard: Vec<String> = audio.chunks(1600).flat_map(|c| stt.push(c, muted)).filter_map(|h| match h {
-                Heard::Keyword(k) => Some(k),
+                Heard::Keyword(k, _) => Some(k),
                 _ => None,
             }).collect();
             println!("{text:?} muted={muted} -> {heard:?} warm={}", stt.recognizer.is_some());
@@ -321,5 +429,53 @@ mod tests {
         for c in audio.chunks(1600) {
             stt.push(c, true);
         }
+    }
+
+    /// Learn a voice from ~20 s of speech, then: the owner's wake word scores high and wakes the model,
+    /// another voice scores lower. (Kokoro voices stand in for people; they resemble each other, so only
+    /// the ordering is asserted here, and the real thresholds are tuned from the logged scores.)
+    #[test]
+    fn enrolls_then_verifies() {
+        let tts = crate::tts::Speaker::new().expect("tts unavailable");
+        let rs = sherpa_onnx::LinearResampler::create(24_000, 16_000).unwrap();
+        let say = |sid: i32, t: &str| {
+            let mut a = vec![0.0f32; 12_000];
+            a.extend(rs.resample(&tts.synth_sid(t, sid), true));
+            a.extend(vec![0.0f32; 16_000]); // a pause, so the VAD closes the segment
+            a
+        };
+        let mut stt = Stt::new().expect("models missing");
+        stt.start_enroll();
+        let mut enrolled = None;
+        let lines = ["The scheduler picks the next process from the ready queue.", "A binary search tree keeps its keys in order.",
+            "Dynamic programming stores answers to small subproblems.", "A transaction either happens completely or not at all.",
+            "Congestion control slows the sender when packets are dropped.", "Paging splits memory into fixed size frames and pages."];
+        'feed: for t in lines.iter().cycle().take(12) {
+            for c in say(0, t).chunks(1600) {
+                for h in stt.push(c, false) {
+                    if let Heard::Enrolled(r) = h {
+                        enrolled = Some(r);
+                        break 'feed;
+                    }
+                }
+            }
+        }
+        let print = enrolled.expect("enrollment never finished").expect("enrollment failed");
+        assert!(stt.print.is_some() && print.len() > 100);
+
+        let mut hear = |sid: i32| {
+            stt.recognizer = None;
+            let sims: Vec<Option<f32>> = say(sid, "Sunday, what is a deadlock?").chunks(1600).flat_map(|c| stt.push(c, false)).filter_map(|h| match h {
+                Heard::Keyword(k, sim) if k == "sunday" => Some(sim),
+                _ => None,
+            }).collect();
+            (sims.first().copied().flatten(), stt.recognizer.is_some())
+        };
+        let (own, woke) = hear(0);
+        let (other, other_woke) = hear(6);
+        println!("owner: sim {own:?} woke {woke}; other voice: sim {other:?} woke {other_woke}");
+        let own = own.expect("no sim for the owner");
+        assert!(own >= speaker::SAME && woke, "the owner should wake it");
+        assert!(other.is_none_or(|o| o < own), "another voice scored at least as high as the owner");
     }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Label } from "./ui";
 
 type Diag = {
@@ -15,15 +16,31 @@ type Diag = {
   ocr: boolean;
 };
 
+type Voice = { enrolled: boolean; model: boolean; target: number };
+type VoiceEvent = { state: "enrolling" | "enrolled" | "cancelled" | "cleared" | "error"; secs?: number; target?: number; message?: string };
+
 /** Models and a health check: when something goes wrong, which part is it? */
 export function Settings() {
   const [d, setD] = useState<Diag | null>(null);
   const [models, setModels] = useState<string[]>([]);
+  const [voice, setVoice] = useState<Voice | null>(null);
+  const [ev, setEv] = useState<VoiceEvent | null>(null);
   const refresh = () => {
     void invoke<Diag>("diagnostics").then(setD);
     void invoke<string[]>("models").then(setModels);
   };
   useEffect(refresh, []);
+
+  useEffect(() => {
+    const status = () => void invoke<Voice>("voice_status").then(setVoice);
+    status();
+    const sub = listen<VoiceEvent>("voice", (e) => {
+      setEv(e.payload);
+      if (e.payload.state !== "enrolling") status();
+    });
+    return () => void sub.then((off) => off());
+  }, []);
+  const enrolling = ev?.state === "enrolling";
 
   const Row = ({ ok, name, note }: { ok: boolean; name: string; note?: string }) => (
     <li className="flex justify-between border-b border-line py-2 text-sm">
@@ -46,6 +63,35 @@ export function Settings() {
           ))}
         </select>
         <span className="text-sm text-dim">Used for chat, quizzes, grading and skills. Smaller is faster.</span>
+      </div>
+
+      <Label>Your voice</Label>
+      <div className="mb-8 max-w-xl">
+        <p className="mb-3 text-sm text-dim">
+          {voice?.enrolled ? "Sunday only answers to your voice." : "Not learned yet, so Sunday answers anyone it hears."} Learning takes about {voice?.target ?? 20} seconds of you talking.
+        </p>
+        {enrolling && (
+          <div className="mb-3">
+            <div className="h-1.5 overflow-hidden rounded bg-track">
+              <div className="h-full bg-accent transition-all" style={{ width: `${Math.min(100, ((ev?.secs ?? 0) / (ev?.target ?? 20)) * 100)}%` }} />
+            </div>
+            <p className="mt-2 text-sm text-dim">Keep talking: read something aloud or describe your day.</p>
+          </div>
+        )}
+        {ev?.state === "error" && <p className="mb-3 text-sm text-rose-400">{ev.message}</p>}
+        <div className="flex gap-2 text-sm">
+          {enrolling ? (
+            <button className="rounded-lg border border-line bg-raised px-3 py-1.5 hover:border-accent" onClick={() => void invoke("cancel_enroll")}>Cancel</button>
+          ) : (
+            <button className="rounded-lg border border-line bg-raised px-3 py-1.5 hover:border-accent disabled:opacity-50" disabled={voice?.model === false} onClick={() => void invoke("enroll_voice")}>
+              {voice?.enrolled ? "Learn again" : "Learn my voice"}
+            </button>
+          )}
+          {voice?.enrolled && !enrolling && (
+            <button className="rounded-lg border border-line px-3 py-1.5 hover:border-accent" onClick={() => void invoke("forget_voice")}>Forget</button>
+          )}
+        </div>
+        {voice?.model === false && <p className="mt-2 text-sm text-rose-400">Speaker model missing: run scripts/fetch-models.sh</p>}
       </div>
 
       <Label>Diagnostics</Label>
