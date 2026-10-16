@@ -24,11 +24,12 @@ Plain words only: no markdown, lists, code or emoji. If they want practice, tell
 
 pub const QUIZ: &str = "You write one oral exam question for a GATE (CS & IT / Data Science & AI) student. \
 It must be answerable out loud in one or two sentences: no tables, code or heavy formulas. \
-`answer` is the short reference answer. `concept` is a short lowercase topic name.";
+`answer` is the short reference answer. `concept` is a short lowercase topic name. Test understanding (why, how, compare, apply), \
+not just recall of a term, and never put the answer in the question.";
 
 pub const GRADE: &str = "You grade a student's spoken answer against a reference answer. \
 verdict is correct only if the key idea is right, partial if it is incomplete, wrong otherwise. \
-feedback is at most two spoken sentences with no markdown: if the answer is not correct, say what was missing and state the right answer. \
+feedback is at most two spoken sentences with no markdown, addressed to the student as \"you\": if the answer is not correct, say what was missing and state the right answer. \
 error_type is one of conceptual, calculation, recall, careless, none. The transcript may contain speech-recognition errors; be lenient about wording.";
 
 pub fn quiz_schema() -> Value {

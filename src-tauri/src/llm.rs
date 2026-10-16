@@ -372,4 +372,20 @@ mod tests {
         println!("grade in {:?}: {g:?}", t.elapsed());
         assert_eq!(g.verdict, crate::db::Verdict::Wrong);
     }
+
+    /// Needs Ollama: each built-in skill must pass its own tests, which is the bar for approval.
+    #[test]
+    fn builtin_skills_pass_their_tests() {
+        let db = Db::open(&std::env::temp_dir().join(format!("sunday-test-{}.db", std::process::id()))).unwrap();
+        let model = model_name(&db);
+        for m in crate::skills::builtins() {
+            for t in &m.tests {
+                let t0 = std::time::Instant::now();
+                let (out, _) = run_skill(&db, &model, &m.id, Some(m.version), &t.input).unwrap();
+                let r = crate::skills::check(t, &out);
+                println!("{} {:?}: pass={} {} -> {out}", m.id, t0.elapsed(), r.pass, r.detail);
+                assert!(r.pass, "{}: {}", m.id, r.detail);
+            }
+        }
+    }
 }

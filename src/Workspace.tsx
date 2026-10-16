@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { Knowledge, importNotes } from "./Knowledge";
+import { Palette, type Cmd, type View } from "./Palette";
+import { Settings } from "./Settings";
+import { Skills } from "./Skills";
+import { Label } from "./ui";
 
-type Msg = { role: "user" | "assistant"; text: string };
+type Msg = { role: "user" | "assistant"; text: string; sources?: string[] };
 type State = {
   due: { concept: string; overdue_days: number }[];
   total: number;
@@ -10,6 +15,7 @@ type State = {
   weak: { concept: string; wrong: number }[];
   recent: { concept: string; verdict: string; ts: number }[];
   pending: string | null;
+  coverage: [number, number];
 };
 
 const VERDICT = { correct: "text-emerald-400", partial: "text-amber-400", wrong: "text-rose-400" } as Record<string, string>;
@@ -29,6 +35,8 @@ export function Workspace() {
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState("");
   const [voice, setVoice] = useState(() => flag("voice", true));
+  const [view, setView] = useState<View>("study");
+  const [palette, setPalette] = useState(false);
   const end = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(() => void invoke<State>("study_state").then(setState), []);
@@ -46,11 +54,39 @@ export function Workspace() {
 
   useEffect(() => end.current?.scrollIntoView({ behavior: "smooth" }), [msgs, busy]);
 
-  const ask = (t: string) => {
+  const ask = (t: string, spoken = voice) => {
     if (!t.trim()) return;
+    setView("study");
     setBusy(true);
-    void invoke("ask", { text: t, voice });
+    void invoke("ask", { text: t, voice: spoken });
   };
+
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPalette((p) => !p);
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, []);
+
+  const commands: Cmd[] = [
+    { title: "Resume last session", hint: state?.pending ? "question waiting" : "", run: () => setView("study") },
+    { title: "Start a practice question", run: () => ask("quiz me") },
+    { title: "Review due concepts", hint: `${state?.due.length ?? 0} due`, run: () => ask("quiz me") },
+    { title: "Explain a concept…", arg: "Which concept?", run: (c) => c && ask(`explain ${c}`) },
+    { title: "Quiz me on…", arg: "Which topic?", run: (c) => c && ask(`quiz me on ${c}`) },
+    { title: "Search local notes…", arg: "Search for", run: (c) => c && ask(`search my notes for ${c}`, false) },
+    { title: "Explain what's on my screen", hint: "reads and draws", run: () => ask("explain what's on my screen", true) },
+    { title: "Clear drawing on screen", run: () => ask("clear the screen", false) },
+    { title: "Import notes", run: () => { setView("knowledge"); void importNotes(); } },
+    { title: "Go to Study", run: () => setView("study") },
+    { title: "Go to Knowledge", run: () => setView("knowledge") },
+    { title: "Go to Skills", run: () => setView("skills") },
+    { title: "Open diagnostics", run: () => setView("settings") },
+  ];
 
   const toggleVoice = (v: boolean) => {
     setVoice(v);
@@ -60,14 +96,27 @@ export function Workspace() {
   };
 
   const acc = state?.total ? Math.round((100 * state.correct) / state.total) : null;
+  const NAV: [View, string][] = [["study", "Study"], ["knowledge", "Knowledge"], ["skills", "Skills"], ["settings", "Settings"]];
 
   return (
     <div className="flex h-full bg-canvas">
       <aside className="flex w-72 shrink-0 flex-col gap-6 overflow-auto border-r border-line bg-panel p-5">
         <div>
           <h1 className="text-lg font-semibold">Sunday</h1>
-          <p className="mt-1 text-sm text-dim">Hold fn or say “sunday”</p>
+          <p className="mt-1 text-sm text-dim">Hold fn or say “sunday” · ⌘K</p>
         </div>
+
+        <nav className="flex flex-col gap-1">
+          {NAV.map(([v, name]) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={`rounded-lg px-3 py-1.5 text-left text-sm ${view === v ? "bg-raised" : "text-dim hover:text-ink"}`}
+            >
+              {name}
+            </button>
+          ))}
+        </nav>
 
         <section>
           <Label>Today</Label>
@@ -75,6 +124,7 @@ export function Workspace() {
             <Stat n={state?.due.length ?? 0} label="due for review" />
             <Stat n={acc === null ? "–" : `${acc}%`} label={`accuracy · ${state?.total ?? 0} answered`} />
           </div>
+          <p className="mt-2 text-xs text-dim">{state ? `${state.coverage[0]} of ${state.coverage[1]} syllabus concepts known` : ""}</p>
           <div className="mt-3 flex gap-2">
             <Btn onClick={() => ask("quiz me")}>{state?.pending ? "New question" : state?.due.length ? "Review due" : "Quiz me"}</Btn>
           </div>
@@ -125,54 +175,55 @@ export function Workspace() {
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <div className="flex-1 select-text space-y-3 overflow-auto p-8">
-          {!msgs.length && (
-            <p className="text-dim">
-              Ask about a concept, or say “quiz me on graphs”. Answers, mistakes and review dates are saved.
-            </p>
-          )}
-          {msgs.map((m, i) => (
-            <div key={i} className={m.role === "user" ? "flex justify-end" : "flex"}>
-              <p
-                className={`max-w-[640px] whitespace-pre-wrap rounded-2xl px-4 py-2.5 leading-snug ${
-                  m.role === "user" ? "bg-raised" : "border border-line"
-                }`}
-              >
-                {m.text}
-              </p>
+        {view === "knowledge" && <Knowledge onAsk={(t) => ask(t)} />}
+        {view === "skills" && <Skills />}
+        {view === "settings" && <Settings />}
+        {view === "study" && (
+          <>
+            <div className="flex-1 select-text space-y-3 overflow-auto p-8">
+              {!msgs.length && (
+                <p className="text-dim">
+                  Ask about a concept, or say “quiz me on graphs”. Say “explain what's on my screen” and I'll look and point. Press ⌘K for everything else.
+                </p>
+              )}
+              {msgs.map((m, i) => (
+                <div key={i} className={m.role === "user" ? "flex justify-end" : "flex"}>
+                  <div className={`max-w-[640px] rounded-2xl px-4 py-2.5 leading-snug ${m.role === "user" ? "bg-raised" : "border border-line"}`}>
+                    <p className="whitespace-pre-wrap">{m.text}</p>
+                    {!!m.sources?.length && <p className="mt-1.5 text-xs text-dim">from {[...new Set(m.sources)].join(" · ")}</p>}
+                  </div>
+                </div>
+              ))}
+              {busy && <p className="text-sm text-dim">thinking…</p>}
+              <div ref={end} />
             </div>
-          ))}
-          {busy && <p className="text-sm text-dim">thinking…</p>}
-          <div ref={end} />
-        </div>
-        <form
-          className="flex items-center gap-3 border-t border-line p-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            ask(text);
-            setText("");
-          }}
-        >
-          <input
-            className="flex-1 select-text rounded-xl border border-line bg-raised px-4 py-2.5 outline-none focus:border-accent"
-            placeholder={state?.pending ? "Type your answer…" : "Ask, or type “quiz me”…"}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            autoFocus
-          />
-          <label className="flex items-center gap-2 text-sm text-dim">
-            <input type="checkbox" checked={voice} onChange={(e) => toggleVoice(e.target.checked)} />
-            speak
-          </label>
-        </form>
+            <form
+              className="flex items-center gap-3 border-t border-line p-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                ask(text);
+                setText("");
+              }}
+            >
+              <input
+                className="flex-1 select-text rounded-xl border border-line bg-raised px-4 py-2.5 outline-none focus:border-accent"
+                placeholder={state?.pending ? "Type your answer…" : "Ask, or type “quiz me”…"}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                autoFocus
+              />
+              <label className="flex items-center gap-2 text-sm text-dim">
+                <input type="checkbox" checked={voice} onChange={(e) => toggleVoice(e.target.checked)} />
+                speak
+              </label>
+            </form>
+          </>
+        )}
       </main>
+      {palette && <Palette commands={commands} onClose={() => setPalette(false)} />}
     </div>
   );
 }
-
-const Label = ({ children }: { children: string }) => (
-  <h2 className="mb-2 font-mono text-xs uppercase tracking-widest text-dim">{children}</h2>
-);
 
 const Stat = ({ n, label }: { n: number | string; label: string }) => (
   <div className="rounded-lg border border-line bg-raised p-3">

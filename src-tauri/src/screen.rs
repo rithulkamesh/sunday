@@ -113,7 +113,10 @@ fn look(model: &str, image: &str, task: &str) -> Res<Look> {
             Err(ureq::Error::Status(404, _)) => return Err(llm::UserMsg(format!("The vision model {model} isn't installed. Run ollama pull {model}.")).into()),
             Err(e) => return Err(e.into()),
         };
-        if let Ok(l) = serde_json::from_str::<Look>(v["message"]["content"].as_str().unwrap_or("")) {
+        // Thinking-style models put schema-constrained output in `thinking` and leave `content` empty.
+        let m = &v["message"];
+        let text = [m["content"].as_str(), m["thinking"].as_str()].into_iter().flatten().find(|t| !t.trim().is_empty()).unwrap_or("");
+        if let Ok(l) = serde_json::from_str::<Look>(text) {
             return Ok(l);
         }
     }

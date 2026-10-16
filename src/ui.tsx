@@ -21,3 +21,7 @@ export function Words({ text }: { text: string }) {
     </p>
   );
 }
+
+export const Label = ({ children }: { children: string }) => (
+  <h2 className="mb-2 font-mono text-xs uppercase tracking-widest text-dim">{children}</h2>
+);
