@@ -16,6 +16,8 @@ mod llm;
 #[cfg(feature = "voice")]
 mod notes;
 #[cfg(feature = "voice")]
+mod memory;
+#[cfg(feature = "voice")]
 mod models;
 #[cfg(feature = "voice")]
 mod speaker;
@@ -25,6 +27,8 @@ mod study;
 mod stt;
 #[cfg(feature = "voice")]
 mod tts;
+#[cfg(feature = "voice")]
+mod web;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -289,6 +293,7 @@ fn listen(hud: Hud) {
                                 continue;
                             }
                             if hud.woken() && stt::is_goodbye(&t) {
+                                let _ = reply.send(llm::Turn { text: String::new(), voice: false, end: true }); // keep what was learned
                                 tts::interrupt();
                                 hud.hide();
                                 s.cool();
@@ -296,7 +301,7 @@ fn listen(hud: Hud) {
                             }
                             if let Some(q) = on_speech(&hud, &t, true) {
                                 tts::interrupt(); // a new question cancels a reply still in flight
-                                let _ = reply.send(llm::Turn { text: q, voice: true });
+                                let _ = reply.send(llm::Turn { text: q, voice: true, end: false });
                             }
                         }
                         stt::Heard::Keyword(k, sim) => {
@@ -385,7 +390,7 @@ struct Reply(Mutex<std::sync::mpsc::Sender<llm::Turn>>);
 #[cfg(feature = "voice")]
 #[tauri::command]
 fn ask(text: String, voice: bool, reply: tauri::State<Reply>) {
-    let _ = reply.0.lock().unwrap().send(llm::Turn { text, voice });
+    let _ = reply.0.lock().unwrap().send(llm::Turn { text, voice, end: false });
 }
 
 #[cfg(feature = "voice")]

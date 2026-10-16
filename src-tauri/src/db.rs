@@ -64,6 +64,28 @@ pub struct Hit {
     pub n: i64,
     pub text: String,
 }
+/// One remembered fact and where it came from. `kind`: "user" (you told me), "web" (read from a page),
+/// "chat" (learned from a conversation, so only a guess until you confirm it).
+#[derive(Clone, Serialize)]
+pub struct Fact {
+    pub id: i64,
+    pub ts: i64,
+    pub kind: String,
+    pub source: String,
+    pub title: String,
+    pub text: String,
+    pub confidence: f64,
+    pub event_date: String,
+    pub score: f32,
+}
+pub struct NewFact<'a> {
+    pub kind: &'a str,
+    pub source: &'a str,
+    pub title: &'a str,
+    pub text: &'a str,
+    pub confidence: f64,
+    pub event_date: &'a str,
+}
 #[derive(Serialize)]
 pub struct Due {
     pub concept: String,
@@ -121,6 +143,8 @@ impl Db {
              CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, ts INTEGER, title TEXT, path TEXT, hash TEXT UNIQUE);
              CREATE TABLE IF NOT EXISTS skills(id TEXT, version INTEGER, manifest TEXT, status TEXT, PRIMARY KEY(id, version));
              CREATE TABLE IF NOT EXISTS skill_runs(id INTEGER PRIMARY KEY, ts INTEGER, skill TEXT, version INTEGER, input TEXT, output TEXT, ms INTEGER, error TEXT);
+             CREATE TABLE IF NOT EXISTS facts(id INTEGER PRIMARY KEY, ts INTEGER, kind TEXT, source TEXT, title TEXT, text TEXT,
+                 confidence REAL, event_date TEXT, embedding BLOB);
              CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(text, doc UNINDEXED, n UNINDEXED);",
         )?;
         let db = Self(Mutex::new(c));
@@ -358,6 +382,54 @@ impl Db {
             "INSERT INTO skill_runs(ts, skill, version, input, output, ms, error) VALUES (?,?,?,?,?,?,?)",
             params![now(), skill, version, input, output, ms, error],
         );
+    }
+
+    pub fn fact_add(&self, f: &NewFact, embedding: Option<&[f32]>) -> i64 {
+        let c = self.0.lock().unwrap();
+        let blob: Option<Vec<u8>> = embedding.map(|e| e.iter().flat_map(|x| x.to_le_bytes()).collect());
+        let _ = c.execute(
+            "INSERT INTO facts(ts, kind, source, title, text, confidence, event_date, embedding) VALUES (?,?,?,?,?,?,?,?)",
+            params![now(), f.kind, f.source, f.title, f.text, f.confidence, f.event_date, blob],
+        );
+        c.last_insert_rowid()
+    }
+
+    fn fact_row(r: &rusqlite::Row) -> rusqlite::Result<Fact> {
+        Ok(Fact { id: r.get(0)?, ts: r.get(1)?, kind: r.get(2)?, source: r.get(3)?, title: r.get(4)?, text: r.get(5)?, confidence: r.get(6)?, event_date: r.get(7)?, score: 0.0 })
+    }
+
+    /// Newest first.
+    pub fn facts(&self, limit: i64) -> Vec<Fact> {
+        let c = self.0.lock().unwrap();
+        let mut st = c.prepare("SELECT id, ts, kind, source, title, text, confidence, event_date FROM facts ORDER BY id DESC LIMIT ?").unwrap();
+        st.query_map([limit], Self::fact_row).unwrap().flatten().collect()
+    }
+
+    pub fn fact(&self, id: i64) -> Option<Fact> {
+        let c = self.0.lock().unwrap();
+        c.query_row("SELECT id, ts, kind, source, title, text, confidence, event_date FROM facts WHERE id = ?", [id], Self::fact_row).optional().unwrap()
+    }
+
+    /// (id, embedding) of every fact that has one, for similarity search.
+    pub fn fact_embeddings(&self) -> Vec<(i64, Vec<f32>)> {
+        let c = self.0.lock().unwrap();
+        let mut st = c.prepare("SELECT id, embedding FROM facts WHERE embedding IS NOT NULL").unwrap();
+        st.query_map([], |r| {
+            let b: Vec<u8> = r.get(1)?;
+            Ok((r.get(0)?, b.chunks_exact(4).map(|x| f32::from_le_bytes([x[0], x[1], x[2], x[3]])).collect()))
+        })
+        .unwrap()
+        .flatten()
+        .collect()
+    }
+
+    pub fn fact_delete(&self, id: i64) {
+        let _ = self.0.lock().unwrap().execute("DELETE FROM facts WHERE id = ?", [id]);
+    }
+
+    /// Forget everything learned from one source (a page, or "chat"). Returns how many.
+    pub fn facts_delete_source(&self, source: &str) -> usize {
+        self.0.lock().unwrap().execute("DELETE FROM facts WHERE source = ?", [source]).unwrap_or(0)
     }
 
     pub fn state(&self) -> State {

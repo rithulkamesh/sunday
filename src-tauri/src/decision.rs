@@ -22,6 +22,12 @@ pub enum Action {
     /// Learn / forget the owner's voice.
     LearnVoice,
     ForgetVoice,
+    /// Read a web page (None: the one open in the front browser) and remember what it says.
+    LearnPage(Option<String>),
+    /// Search the web, read the best results, answer from them.
+    Research(String),
+    /// Store something the user said, as they said it.
+    Remember(String),
     /// Run an approved skill.
     Skill { id: String, input: String },
 }
@@ -31,6 +37,11 @@ pub trait Decider {
 }
 
 pub struct Rules;
+
+/// The first http(s) address in the text, without trailing punctuation.
+fn first_url(text: &str) -> Option<String> {
+    text.split_whitespace().find(|w| w.starts_with("http://") || w.starts_with("https://")).map(|w| w.trim_end_matches(['.', ',', ')', '!', '?', ';']).to_string())
+}
 
 fn norm(t: &str) -> String {
     format!(" {} ", t.to_lowercase().chars().map(|c| if c.is_alphanumeric() || c == '\'' || c == '.' || c == '_' || c == '-' { c } else { ' ' }).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" "))
@@ -48,6 +59,25 @@ impl Decider for Rules {
         }
         if has(&[" forget my voice ", " reset my voice ", " unlearn my voice "]) {
             return Action::ForgetVoice;
+        }
+        if let Some(url) = first_url(text).filter(|_| has(&[" read ", " learn ", " save ", " remember ", " summarize ", " summarise ", " add ", " study "])) {
+            return Action::LearnPage(Some(url));
+        }
+        if has(&[" read this page ", " learn this page ", " remember this page ", " save this page ", " learn from this page ", " read this tab ", " learn this tab ", " save this tab ",
+            " remember this tab ", " read this article ", " learn this article ", " save this article ", " read the page i'm on ", " learn the page i'm on "]) {
+            return Action::LearnPage(None);
+        }
+        for lead in [" research ", " look up ", " search the web for ", " search online for ", " search the internet for ", " find out about ", " find out "] {
+            if let Some((_, q)) = t.split_once(lead) {
+                return Action::Research(q.trim().to_string());
+            }
+        }
+        // Original wording and casing are kept: "my GATE exam" shouldn't become "my gate exam".
+        let ascii = text.to_ascii_lowercase();
+        for lead in ["remember that ", "note that ", "keep in mind that ", "make a note that "] {
+            if let Some(i) = ascii.find(lead) {
+                return Action::Remember(text[i + lead.len()..].trim().trim_end_matches(['.', '!']).to_string());
+            }
         }
         if has(&[" clear the screen ", " clear my screen ", " clear that ", " erase that ", " hide that ", " clear the drawing ", " remove the drawing "]) {
             return Action::ClearScreen;
@@ -80,8 +110,11 @@ impl Decider for Rules {
 }
 
 /// Refuses actions that can't run right now; the caller falls back to `Chat` with an explanation.
-pub fn permitted(a: &Action, skill_exists: impl Fn(&str) -> bool) -> Result<(), String> {
+pub fn permitted(a: &Action, skill_exists: impl Fn(&str) -> bool, web_on: bool) -> Result<(), String> {
     match a {
+        Action::LearnPage(_) | Action::Research(_) if !web_on => Err("Web access is off. Turn it on in Settings, then ask again.".into()),
+        Action::Research(q) if q.trim().is_empty() => Err("What should I look up?".into()),
+        Action::Remember(t) if t.trim().len() < 3 => Err("What should I remember?".into()),
         Action::Skill { id, .. } if !skill_exists(id) => Err(format!("There's no approved skill called {id}.")),
         Action::Skill { input, .. } if input.trim().is_empty() => Err("What should the skill work on?".into()),
         Action::Notes(q) if q.trim().is_empty() => Err("What should I search your notes for?".into()),
@@ -108,6 +141,13 @@ mod tests {
         assert!(matches!(d("Can you explain what's on my screen?", false), Screen(_)));
         assert!(matches!(d("explain this question", true), Screen(_))); // wins over answering
         assert_eq!(d("clear the screen", false), ClearScreen);
+        assert_eq!(d("Sunday, remember that my GATE exam is on 8 February.", false), Remember("my GATE exam is on 8 February".into()));
+        assert_eq!(d("learn this page", false), LearnPage(None));
+        assert_eq!(d("explain this page", false), Screen("explain this page".into())); // looking at it is not saving it
+        assert_eq!(d("please read https://example.com/os-notes.", false), LearnPage(Some("https://example.com/os-notes".into())));
+        assert_eq!(d("https://example.com is down", false), Chat); // a link without a verb is just conversation
+        assert_eq!(d("research the banker's algorithm", false), Research("the banker's algorithm".into()));
+        assert_eq!(d("look up how tcp congestion control works", false), Research("how tcp congestion control works".into()));
         assert_eq!(d("Sunday, learn my voice", false), LearnVoice);
         assert_eq!(d("forget my voice", false), ForgetVoice);
         assert_eq!(d("what do my notes say about deadlock", false), Notes("deadlock".into()));
@@ -117,9 +157,14 @@ mod tests {
     #[test]
     fn validates_before_running() {
         let known = |id: &str| id == "study.mnemonic";
-        assert!(permitted(&Skill { id: "study.mnemonic".into(), input: "x".into() }, known).is_ok());
-        assert!(permitted(&Skill { id: "nope".into(), input: "x".into() }, known).is_err());
-        assert!(permitted(&Skill { id: "study.mnemonic".into(), input: " ".into() }, known).is_err());
-        assert!(permitted(&Chat, known).is_ok());
+        assert!(permitted(&Skill { id: "study.mnemonic".into(), input: "x".into() }, known, false).is_ok());
+        assert!(permitted(&Skill { id: "nope".into(), input: "x".into() }, known, false).is_err());
+        assert!(permitted(&Skill { id: "study.mnemonic".into(), input: " ".into() }, known, false).is_err());
+        assert!(permitted(&Chat, known, false).is_ok());
+        // The web is opt-in: nothing leaves the machine until it's switched on.
+        assert!(permitted(&Research("deadlock".into()), known, false).unwrap_err().contains("Web access is off"));
+        assert!(permitted(&LearnPage(None), known, false).is_err());
+        assert!(permitted(&Research("deadlock".into()), known, true).is_ok());
+        assert!(permitted(&Remember("x".into()), known, false).is_err());
     }
 }

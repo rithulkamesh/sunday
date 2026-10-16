@@ -299,6 +299,11 @@ fn tool() -> Option<PathBuf> {
     p.exists().then_some(p)
 }
 
+/// The app in front right now.
+pub fn front_app() -> Option<String> {
+    desk().map(|d| d.front.app)
+}
+
 fn desk() -> Option<Desk> {
     let out = std::process::Command::new(tool()?).arg("--windows").output().ok().filter(|o| o.status.success())?;
     serde_json::from_slice(&out.stdout).ok()
