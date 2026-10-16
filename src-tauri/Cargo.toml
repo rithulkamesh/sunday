@@ -32,10 +32,9 @@ default = ["voice"]
 # Wake word, live transcription and TTS (sherpa-onnx). Models: scripts/fetch-models.sh
 voice = ["dep:sherpa-onnx", "dep:ureq", "dep:rusqlite", "dep:base64", "dep:scraper", "dep:dom_smoothie", "dep:url", "dep:chromiumoxide", "dep:tokio", "dep:futures"]
 
-# `tauri dev` builds the dev profile. Unoptimised Rust (and unoptimised dependencies) makes the numeric loops
-# (similarity search, resampling, JSON, HTML parsing) several times slower than they need to be.
+# `tauri dev` builds the dev profile. Unoptimised Rust makes the numeric loops (similarity search, resampling, JSON,
+# HTML parsing) several times slower than they need to be. One level for everything: a higher level for dependencies
+# only broke linking (shared generics compiled at different levels).
 [profile.dev]
 opt-level = 1
 
-[profile.dev.package."*"]
-opt-level = 3
