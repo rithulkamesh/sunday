@@ -170,6 +170,7 @@ fn listen(hud: Hud) {
             let _ = app.emit("level", rms * 8.0);
             #[cfg(feature = "voice")]
             if tts::speaking() {
+                stt.as_mut().map(|s| s.touch()); // mid-conversation: keep the model warm
                 continue; // don't transcribe our own voice
             }
             #[cfg(feature = "voice")]

@@ -1,12 +1,15 @@
 //! Silero VAD -> Parakeet TDT (sherpa-onnx). Decodes the growing utterance every 0.2 s so
 //! words appear live, then once more when the VAD closes the segment.
 use crate::models::path;
+use std::time::{Duration, Instant};
 use sherpa_onnx::{
     OfflineRecognizer, OfflineRecognizerConfig, VadModelConfig, VoiceActivityDetector,
 };
 
 const WINDOW: usize = 512; // Silero's fixed window at 16 kHz
 const INTERIM_EVERY: usize = 3_200; // samples: 0.2 s of audio
+/// Parakeet is dropped this long after the last speech; the tiny VAD keeps listening.
+const IDLE: Duration = Duration::from_secs(10);
 const PARAKEET: &str = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8";
 
 pub enum Heard {
@@ -16,9 +19,34 @@ pub enum Heard {
     Final(String),
 }
 
+fn load_recognizer() -> Option<OfflineRecognizer> {
+    let t0 = Instant::now();
+    let mut asr = OfflineRecognizerConfig::default();
+    let t = &mut asr.model_config;
+    t.transducer.encoder = Some(path(&format!("{PARAKEET}/encoder.int8.onnx")));
+    t.transducer.decoder = Some(path(&format!("{PARAKEET}/decoder.int8.onnx")));
+    t.transducer.joiner = Some(path(&format!("{PARAKEET}/joiner.int8.onnx")));
+    t.tokens = Some(path(&format!("{PARAKEET}/tokens.txt")));
+    t.model_type = Some("nemo_transducer".into());
+    t.num_threads = 4;
+
+    let r = OfflineRecognizer::create(&asr);
+    eprintln!("[stt] model loaded in {:?}", t0.elapsed());
+    r
+}
+
+fn decode(recognizer: &OfflineRecognizer, samples: &[f32]) -> String {
+    let stream = recognizer.create_stream();
+    stream.accept_waveform(16_000, samples);
+    recognizer.decode(&stream);
+    stream.get_result().map(|r| r.text.trim().to_string()).unwrap_or_default()
+}
+
 pub struct Stt {
     vad: VoiceActivityDetector,
-    recognizer: OfflineRecognizer,
+    /// Loaded on demand (hundreds of MB), dropped after IDLE.
+    recognizer: Option<OfflineRecognizer>,
+    last_active: Instant,
     buf: Vec<f32>,
     fed: usize,
     speaking: bool,
@@ -42,18 +70,10 @@ impl Stt {
         vad.silero_vad.window_size = WINDOW as i32;
         vad.sample_rate = 16_000;
 
-        let mut asr = OfflineRecognizerConfig::default();
-        let t = &mut asr.model_config;
-        t.transducer.encoder = Some(path(&format!("{PARAKEET}/encoder.int8.onnx")));
-        t.transducer.decoder = Some(path(&format!("{PARAKEET}/decoder.int8.onnx")));
-        t.transducer.joiner = Some(path(&format!("{PARAKEET}/joiner.int8.onnx")));
-        t.tokens = Some(path(&format!("{PARAKEET}/tokens.txt")));
-        t.model_type = Some("nemo_transducer".into());
-        t.num_threads = 4;
-
         Some(Self {
             vad: VoiceActivityDetector::create(&vad, 60.0)?,
-            recognizer: OfflineRecognizer::create(&asr)?,
+            recognizer: None,
+            last_active: Instant::now(),
             buf: Vec::new(),
             fed: 0,
             speaking: false,
@@ -61,11 +81,9 @@ impl Stt {
         })
     }
 
-    fn decode(&self, samples: &[f32]) -> String {
-        let stream = self.recognizer.create_stream();
-        stream.accept_waveform(16_000, samples);
-        self.recognizer.decode(&stream);
-        stream.get_result().map(|r| r.text.trim().to_string()).unwrap_or_default()
+    /// Counts as activity: call while the app is busy replying so the model isn't dropped mid-conversation.
+    pub fn touch(&mut self) {
+        self.last_active = Instant::now();
     }
 
     /// Feed 16 kHz mono samples; returns whatever was heard since the last call.
@@ -83,9 +101,17 @@ impl Stt {
             self.since_interim = 0;
         }
 
+        // Speech (or a finished segment) needs the big model; silence doesn't.
+        if self.speaking || !self.vad.is_empty() {
+            self.last_active = Instant::now();
+            if self.recognizer.is_none() {
+                self.recognizer = load_recognizer();
+            }
+        }
+
         // Live words while the utterance is still going.
-        if self.speaking && self.since_interim >= INTERIM_EVERY {
-            let text = self.decode(&self.buf);
+        if let (true, Some(rec)) = (self.speaking && self.since_interim >= INTERIM_EVERY, &self.recognizer) {
+            let text = decode(rec, &self.buf);
             if !text.is_empty() {
                 out.push(Heard::Interim(text));
             }
@@ -96,7 +122,7 @@ impl Stt {
         let mut closed = false;
         while !self.vad.is_empty() {
             if let Some(seg) = self.vad.front() {
-                let text = self.decode(seg.samples());
+                let text = self.recognizer.as_ref().map(|r| decode(r, seg.samples())).unwrap_or_default();
                 if !text.is_empty() {
                     out.push(Heard::Final(text));
                 }
@@ -113,6 +139,10 @@ impl Stt {
             let drop = self.buf.len() - 10 * WINDOW;
             self.buf.drain(..drop);
             self.fed = self.fed.saturating_sub(drop);
+        }
+        if !self.speaking && self.recognizer.is_some() && self.last_active.elapsed() > IDLE {
+            self.recognizer = None;
+            eprintln!("[stt] idle, model unloaded");
         }
         out
     }
@@ -139,5 +169,11 @@ mod tests {
         assert!(!finals.is_empty(), "no final transcript");
         println!("{finals:?}");
         assert!(heard.iter().any(|h| matches!(h, Heard::Interim(_))), "no live words");
+
+        // Goes cold after IDLE of silence, and wakes again on speech.
+        assert!(stt.recognizer.is_some());
+        stt.last_active = Instant::now() - IDLE - Duration::from_secs(1);
+        stt.push(&silence[..1600]);
+        assert!(stt.recognizer.is_none(), "model still loaded when idle");
     }
 }
