@@ -4,9 +4,13 @@
 mod bargein;
 mod mic;
 #[cfg(feature = "voice")]
+mod db;
+#[cfg(feature = "voice")]
 mod llm;
 #[cfg(feature = "voice")]
 mod models;
+#[cfg(feature = "voice")]
+mod study;
 #[cfg(feature = "voice")]
 mod stt;
 #[cfg(feature = "voice")]
@@ -170,7 +174,7 @@ fn listen(hud: Hud) {
         #[cfg(feature = "voice")]
         let (mut barge, mut mic_level) = (bargein::BargeIn::default(), 0.0f32);
         #[cfg(feature = "voice")]
-        let reply = llm::spawn(hud.clone(), app.state::<Tts>().0.lock().unwrap().clone());
+        let reply = app.state::<Reply>().0.lock().unwrap().clone();
         for chunk in rx {
             let rms = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len().max(1) as f32).sqrt();
             let _ = app.emit("level", rms * 8.0);
@@ -219,7 +223,7 @@ fn listen(hud: Hud) {
                             }
                             if let Some(q) = on_speech(&hud, &t, true) {
                                 tts::interrupt(); // a new question cancels a reply still in flight
-                                let _ = reply.send(q);
+                                let _ = reply.send(llm::Turn { text: q, voice: true });
                             }
                         }
                         stt::Heard::Keyword(k) => {
@@ -236,6 +240,28 @@ fn listen(hud: Hud) {
             }
         }
     });
+}
+
+#[cfg(feature = "voice")]
+struct Reply(Mutex<std::sync::mpsc::Sender<llm::Turn>>);
+
+/// Typed input from the workspace takes the same path as speech.
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn ask(text: String, voice: bool, reply: tauri::State<Reply>) {
+    let _ = reply.0.lock().unwrap().send(llm::Turn { text, voice });
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn study_state(db: tauri::State<Arc<db::Db>>) -> db::State {
+    db.state()
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn history(limit: i64, db: tauri::State<Arc<db::Db>>) -> Vec<db::Msg> {
+    db.history(limit)
 }
 
 #[cfg(feature = "voice")]
@@ -269,7 +295,13 @@ fn main() {
             #[cfg(feature = "voice")]
             speak,
             #[cfg(feature = "voice")]
-            stop_speaking
+            stop_speaking,
+            #[cfg(feature = "voice")]
+            ask,
+            #[cfg(feature = "voice")]
+            study_state,
+            #[cfg(feature = "voice")]
+            history
         ])
         .setup(|app| {
             #[cfg(feature = "voice")]
@@ -296,6 +328,14 @@ fn main() {
                 wake_until: Arc::default(),
                 epoch: Arc::default(),
             };
+            #[cfg(feature = "voice")]
+            {
+                let db = Arc::new(db::Db::open(&app.path().app_data_dir()?.join("sunday.db"))?);
+                let tts_tx = app.state::<Tts>().0.lock().unwrap().clone();
+                let reply = llm::spawn(hud.clone(), tts_tx, db.clone());
+                app.manage(db);
+                app.manage(Reply(Mutex::new(reply)));
+            }
             watch_fn(hud.clone());
             listen(hud);
 

@@ -10,7 +10,9 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
 cpal = "0.15"
 tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 ureq = { version = "2", default-features = false, features = ["json"], optional = true }
 sherpa-onnx = { version = "1.13.8", default-features = false, features = ["static"], optional = true }
 
@@ -20,4 +22,4 @@ objc2 = "0.5"
 [features]
 default = ["voice"]
 # Wake word, live transcription and TTS (sherpa-onnx). Models: scripts/fetch-models.sh
-voice = ["dep:sherpa-onnx", "dep:ureq"]
+voice = ["dep:sherpa-onnx", "dep:ureq", "dep:rusqlite"]
