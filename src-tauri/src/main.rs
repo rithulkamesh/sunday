@@ -1,6 +1,7 @@
 //! Sunday: hold fn or say "sunday" -> HUD pill at the bottom of the screen.
 //! A normal dock app: closing the main window hides it, only Quit (dock/tray/cmd+q) exits.
 
+mod agent;
 mod bargein;
 mod mic;
 #[cfg(feature = "voice")]

@@ -7,7 +7,7 @@ almost anything, looks at your screen and points at things, reads the web, and r
 Silero VAD + a wake-word spotter + Parakeet (speech in), Ollama (thinking), Kokoro (speech out), SQLite (memory).
 
 Honest status: *Sees* (screen, diagrams), *Understands* (teaching, notes), *Notices* (memory, voice) and *Decides* (typed actions, rules router) exist today.
-*Acts* (doing things on your computer, behind approvals) is the next build. The long-term goal is a general agent that gets more capable the more it's used.
+*Acts* has started: opening apps, pages and files and typing, with approvals; clicking and multi-app workflows are next. The long-term goal is a general agent that gets more capable the more it's used.
 
 ## Run
 
@@ -51,6 +51,8 @@ When you say goodbye, lasting facts about you are saved as unconfirmed guesses. 
 **Skills.** Versioned, prompt-only capabilities (a template, an output schema, tests). No generated code, no tools.
 Lifecycle: proposed → experimental → approved; approval needs a passing test run on that version; any approved version can be rolled back.
 Describe one in the Skills view and the model drafts it. Voice: "run skill learn.mnemonic on the OSI model".
+
+**Acting.** "Open Spotify", "pull up images of a keyboard", "go to github.com", "type …". The model picks one typed step at a time (`agent.rs`): open an app, open a page (in the browser you already have open), open a file in your home folder, type into the front app, web search, look at the screen, recall. Opening an app or page just happens when you asked for it directly; typing and opening files always ask "…?" and wait for a yes; and once anything read from the web, the screen or memory is in play, everything asks (read content is data, never a command). Hidden folders, non-http addresses and anything outside your home folder are refused. Every step is logged in the `actions` table. Typing needs Accessibility permission.
 
 **Decisions.** Every utterance becomes one typed `Action` (`decision.rs`) before anything runs, and is checked against what's
 permitted. `Rules` is the deterministic router; the `Decider` trait is where a smarter router goes.

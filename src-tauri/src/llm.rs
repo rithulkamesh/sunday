@@ -16,7 +16,7 @@ use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
-type Res<T> = Result<T, Box<dyn std::error::Error>>;
+pub type Res<T> = Result<T, Box<dyn std::error::Error>>;
 
 /// An error whose text is fit to be spoken to the user as is.
 #[derive(Debug)]
@@ -179,6 +179,17 @@ pub fn spawn(hud: Hud, speak: Sender<Cmd>, db: Arc<Db>) -> Sender<Turn> {
 /// Every utterance is decided first (typed `Action`), checked, then run.
 fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
     let pending = c.db.pending();
+    // A step waiting for a yes: this utterance is the answer (anything else drops the step and is handled normally).
+    if let Some(st) = crate::agent::waiting(c.db) {
+        match crate::agent::reply(q) {
+            crate::agent::Reply::Yes => return act(c, |plan, look| crate::agent::approve(c.db, st, plan, look)),
+            crate::agent::Reply::No => {
+                crate::agent::cancel(c.db, &st);
+                return Ok(say(c, "Okay, I won't."));
+            }
+            crate::agent::Reply::Other => crate::agent::cancel(c.db, &st),
+        }
+    }
     let action = decision::Rules.decide(q, pending.is_some());
     let web_on = c.db.kv_get("web").as_deref() == Some("on");
     if let Err(why) = decision::permitted(&action, |id| c.db.skill(id, None).is_some(), web_on) {
@@ -207,6 +218,7 @@ fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
             Ok(say(c, "Okay, I've forgotten your voice. I'll answer anyone now."))
         }
         (Action::Teach(topic), _) => teach(c, history, &topic),
+        (Action::Do(task), _) => act(c, |plan, look| crate::agent::start(c.db, &task, plan, look)),
         (Action::Remember(t), _) => {
             let new = crate::memory::remember(c.db, &t);
             let _ = c.hud.app.emit("memory", json!({"kind": "user", "added": usize::from(new)}));
@@ -235,6 +247,15 @@ fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
             chat(c, history, &Context { notes: &notes, memory: &memory, ..Context::default() })
         }
     }
+}
+
+/// Runs one stretch of the agent loop and speaks where it ended: the result, or the question it needs a yes to.
+fn act(c: &Ctx, run: impl FnOnce(&dyn Fn(&crate::agent::State) -> Res<crate::agent::Step>, &dyn Fn(&str) -> Result<String, String>) -> Res<crate::agent::Out>) -> Res<String> {
+    let plan = crate::agent::model_plan(c.model);
+    let look = |t: &str| crate::screen::explain(&c.hud.app, c.db, t, &|_| {}, &|| tts::epoch() != c.ep).map(|r| r.text).map_err(|e| e.to_string());
+    Ok(match run(&plan, &look)? {
+        crate::agent::Out::Done(t) | crate::agent::Out::Ask(t) => say(c, &t),
+    })
 }
 
 /// Teaches any subject from scratch. The first time, the model drafts a learning plan (concepts in order, with

@@ -393,6 +393,18 @@ pub fn front_app() -> Option<String> {
     desk().map(|d| d.front.app)
 }
 
+/// Names of the apps with windows open, the one in front first.
+pub fn open_apps() -> Vec<String> {
+    let Some(d) = desk() else { return vec![] };
+    let mut v = vec![d.front.app.clone()];
+    for w in &d.windows {
+        if !v.contains(&w.app) {
+            v.push(w.app.clone());
+        }
+    }
+    v
+}
+
 fn desk() -> Option<Desk> {
     let out = std::process::Command::new(tool()?).arg("--windows").output().ok().filter(|o| o.status.success())?;
     serde_json::from_slice(&out.stdout).ok()

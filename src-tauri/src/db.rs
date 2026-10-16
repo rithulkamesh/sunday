@@ -145,6 +145,7 @@ impl Db {
              CREATE TABLE IF NOT EXISTS skill_runs(id INTEGER PRIMARY KEY, ts INTEGER, skill TEXT, version INTEGER, input TEXT, output TEXT, ms INTEGER, error TEXT);
              CREATE TABLE IF NOT EXISTS facts(id INTEGER PRIMARY KEY, ts INTEGER, kind TEXT, source TEXT, title TEXT, text TEXT,
                  confidence REAL, event_date TEXT, embedding BLOB);
+             CREATE TABLE IF NOT EXISTS actions(id INTEGER PRIMARY KEY, ts INTEGER, task TEXT, tool TEXT, args TEXT, outcome TEXT);
              CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(text, doc UNINDEXED, n UNINDEXED);",
         )?;
         let db = Self(Mutex::new(c));
@@ -371,6 +372,11 @@ impl Db {
 
     pub fn kv_get(&self, key: &str) -> Option<String> {
         self.0.lock().unwrap().query_row("SELECT value FROM kv WHERE key = ?", [key], |r| r.get(0)).optional().unwrap()
+    }
+
+    /// The audit trail of everything Sunday did (or was told not to do) on the computer.
+    pub fn act_log(&self, task: &str, tool: &str, args: &str, outcome: &str) {
+        let _ = self.0.lock().unwrap().execute("INSERT INTO actions(ts, task, tool, args, outcome) VALUES (?,?,?,?,?)", params![now(), task, tool, args, outcome]);
     }
 
     pub fn kv_set(&self, key: &str, value: &str) {

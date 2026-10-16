@@ -30,6 +30,8 @@ pub enum Action {
     Research(String),
     /// Store something the user said, as they said it.
     Remember(String),
+    /// Do something on the computer (open an app, a page, a file; type; look things up). Each change asks first.
+    Do(String),
     /// Run an approved skill.
     Skill { id: String, input: String },
 }
@@ -106,12 +108,28 @@ impl Decider for Rules {
         if let Some(topic) = learn::quiz_request(text) {
             return Action::Quiz(topic);
         }
+        if let Some(task) = computer_task(text) {
+            return Action::Do(task);
+        }
         if has_pending {
             Action::Answer
         } else {
             Action::Chat
         }
     }
+}
+
+/// "open Safari", "can you go to github.com", "type hello": a request to act, not to talk.
+/// ponytail: leading-verb rules; a smarter router can decide the rest.
+fn computer_task(text: &str) -> Option<String> {
+    let t = text.trim().trim_end_matches(['.', '!', '?']);
+    let mut rest = t.to_lowercase();
+    for lead in ["sunday ", "please ", "can you ", "could you ", "would you ", "i want you to ", "go ahead and "] {
+        while let Some(r) = rest.strip_prefix(lead) {
+            rest = r.to_string();
+        }
+    }
+    ["open ", "launch ", "go to ", "type ", "navigate to ", "pull up ", "bring up "].iter().any(|v| rest.starts_with(v)).then(|| t.to_string())
 }
 
 /// Refuses actions that can't run right now; the caller falls back to `Chat` with an explanation.
@@ -186,6 +204,9 @@ mod tests {
         assert_eq!(fix_heard("what's on my screen"), "what's on my screen");
         assert_eq!(fix_heard("look at the writing on my screen"), "look at the writing on my screen");
         assert_eq!(d("clear the screen", false), ClearScreen);
+        assert_eq!(d("Can you open Safari?", false), Do("Can you open Safari".into()));
+        assert_eq!(d("open question: what is a mutex", false), Do("open question: what is a mutex".into())); // ponytail: verb rule, the model's plan will just finish
+        assert_eq!(d("what does open mean", false), Chat);
         assert_eq!(d("Sunday, remember that my driving test is on 8 February.", false), Remember("my driving test is on 8 February".into()));
         assert_eq!(d("learn this page", false), LearnPage(None));
         assert_eq!(d("explain this page", false), Screen("explain this page".into())); // looking at it is not saving it
