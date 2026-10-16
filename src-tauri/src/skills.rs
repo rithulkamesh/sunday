@@ -108,7 +108,7 @@ pub struct DraftTest {
     pub contains: String,
 }
 
-pub const DRAFT_SYSTEM: &str = "You design small prompt-only skills for a study assistant. A skill takes one text input and returns \
+pub const DRAFT_SYSTEM: &str = "You design small prompt-only skills for a personal assistant. A skill takes one text input and returns \
 a few short text fields. `name` is short (2-3 words). `prompt` instructs a model and must contain {input}. `output` lists 1-3 \
 field names. Give 2 `tests`: an example input, one output field `key`, and a word or phrase `contains` that any correct answer must include.";
 
@@ -125,7 +125,7 @@ pub fn builtins() -> Vec<Manifest> {
     let t = |input: &str, key: &str, want: &str| Test { input: input.into(), expect: [(key.to_string(), want.to_string())].into() };
     vec![
         Manifest {
-            id: "study.mnemonic".into(),
+            id: "learn.mnemonic".into(),
             version: 1,
             purpose: "Make a memorable mnemonic for a list or concept.".into(),
             prompt: "Create a short, vivid mnemonic to remember: {input}. Also say in one sentence how it maps to the material.".into(),
@@ -135,10 +135,10 @@ pub fn builtins() -> Vec<Manifest> {
             status: "experimental".into(),
         },
         Manifest {
-            id: "study.summarize".into(),
+            id: "learn.summarize".into(),
             version: 1,
             purpose: "Summarize a passage into a one-line gist and a quick recall prompt.".into(),
-            prompt: "Summarize this study material in one sentence, then write one question that checks recall of it:\n{input}".into(),
+            prompt: "Summarize this text in one sentence, then write one question that checks recall of it:\n{input}".into(),
             output: vec!["gist".into(), "recall_question".into()],
             timeout_s: 60,
             tests: vec![t("A process is a program in execution; a thread is a lightweight unit of execution inside a process.", "gist", "process")],

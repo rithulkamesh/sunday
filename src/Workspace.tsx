@@ -29,18 +29,18 @@ const flag = (k: string, d: boolean) => {
   }
 };
 
-/** Main window: today's study status on the left, the conversation (typed or spoken) on the right. */
+/** Main window: what you're learning on the left, the conversation (typed or spoken) on the right. */
 export function Workspace() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [state, setState] = useState<State | null>(null);
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState("");
   const [voice, setVoice] = useState(() => flag("voice", true));
-  const [view, setView] = useState<View>("study");
+  const [view, setView] = useState<View>("home");
   const [palette, setPalette] = useState(false);
   const end = useRef<HTMLDivElement>(null);
 
-  const refresh = useCallback(() => void invoke<State>("study_state").then(setState), []);
+  const refresh = useCallback(() => void invoke<State>("learn_state").then(setState), []);
 
   useEffect(() => {
     void invoke<Msg[]>("history", { limit: 50 }).then(setMsgs);
@@ -57,7 +57,7 @@ export function Workspace() {
 
   const ask = (t: string, spoken = voice) => {
     if (!t.trim()) return;
-    setView("study");
+    setView("home");
     setBusy(true);
     void invoke("ask", { text: t, voice: spoken });
   };
@@ -74,7 +74,8 @@ export function Workspace() {
   }, []);
 
   const commands: Cmd[] = [
-    { title: "Resume last session", hint: state?.pending ? "question waiting" : "", run: () => setView("study") },
+    { title: "Resume last session", hint: state?.pending ? "question waiting" : "", run: () => setView("home") },
+    { title: "Teach me…", arg: "What do you want to learn?", run: (t) => t && ask(`teach me ${t}`) },
     { title: "Start a practice question", run: () => ask("quiz me") },
     { title: "Review due concepts", hint: `${state?.due.length ?? 0} due`, run: () => ask("quiz me") },
     { title: "Explain a concept…", arg: "Which concept?", run: (c) => c && ask(`explain ${c}`) },
@@ -87,7 +88,7 @@ export function Workspace() {
     { title: "Research…", arg: "What should I look up?", hint: "web access", run: (q) => q && ask(`research ${q}`) },
     { title: "Go to Memory", run: () => setView("memory") },
     { title: "Import notes", run: () => { setView("knowledge"); void importNotes(); } },
-    { title: "Go to Study", run: () => setView("study") },
+    { title: "Go to Home", run: () => setView("home") },
     { title: "Go to Knowledge", run: () => setView("knowledge") },
     { title: "Go to Skills", run: () => setView("skills") },
     { title: "Learn my voice", hint: "only answer to me", run: () => { setView("settings"); void invoke("enroll_voice"); } },
@@ -103,7 +104,7 @@ export function Workspace() {
   };
 
   const acc = state?.total ? Math.round((100 * state.correct) / state.total) : null;
-  const NAV: [View, string][] = [["study", "Study"], ["knowledge", "Knowledge"], ["memory", "Memory"], ["skills", "Skills"], ["settings", "Settings"]];
+  const NAV: [View, string][] = [["home", "Home"], ["knowledge", "Knowledge"], ["memory", "Memory"], ["skills", "Skills"], ["settings", "Settings"]];
 
   return (
     <div className="flex h-full bg-canvas">
@@ -126,12 +127,12 @@ export function Workspace() {
         </nav>
 
         <section>
-          <Label>Today</Label>
+          <Label>Learning</Label>
           <div className="grid grid-cols-2 gap-2">
             <Stat n={state?.due.length ?? 0} label="due for review" />
             <Stat n={acc === null ? "–" : `${acc}%`} label={`accuracy · ${state?.total ?? 0} answered`} />
           </div>
-          <p className="mt-2 text-xs text-dim">{state ? `${state.coverage[0]} of ${state.coverage[1]} syllabus concepts known` : ""}</p>
+          <p className="mt-2 text-xs text-dim">{state ? `${state.coverage[0]} of ${state.coverage[1]} concepts known` : ""}</p>
           <div className="mt-3 flex gap-2">
             <Btn onClick={() => ask("quiz me")}>{state?.pending ? "New question" : state?.due.length ? "Review due" : "Quiz me"}</Btn>
           </div>
@@ -186,12 +187,12 @@ export function Workspace() {
         {view === "memory" && <Memory onAsk={(t) => ask(t)} />}
         {view === "skills" && <Skills />}
         {view === "settings" && <Settings />}
-        {view === "study" && (
+        {view === "home" && (
           <>
             <div className="flex-1 select-text space-y-3 overflow-auto p-8">
               {!msgs.length && (
                 <p className="text-dim">
-                  Ask about a concept, or say “quiz me on graphs”. Say “explain what's on my screen” and I'll look and point. Press ⌘K for everything else.
+                  Ask me anything. Say “teach me …” to learn something new, “explain what's on my screen” and I'll look and point, “research …” to look something up. Press ⌘K for everything else.
                 </p>
               )}
               {msgs.map((m, i) => (
@@ -215,7 +216,7 @@ export function Workspace() {
             >
               <input
                 className="flex-1 select-text rounded-xl border border-line bg-raised px-4 py-2.5 outline-none focus:border-accent"
-                placeholder={state?.pending ? "Type your answer…" : "Ask, or type “quiz me”…"}
+                placeholder={state?.pending ? "Type your answer…" : "Ask anything…"}
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 autoFocus

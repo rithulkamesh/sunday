@@ -18,7 +18,7 @@ export const importNotes = async () => {
   return picked ? invoke<string[]>("import_notes", { paths: Array.isArray(picked) ? picked : [picked] }) : [];
 };
 
-/** Study material and the syllabus map: what you've imported, and what you know so far. */
+/** Documents you've imported, and the learning map: what you're learning and how far along you are. */
 export function Knowledge({ onAsk }: { onAsk: (text: string) => void }) {
   const [graph, setGraph] = useState<Node[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
@@ -77,9 +77,9 @@ export function Knowledge({ onAsk }: { onAsk: (text: string) => void }) {
       </section>
 
       <section>
-        <Label>{`Syllabus · ${known} of ${graph.length} known`}</Label>
+        <Label>{`Learning map · ${known} of ${graph.length} known`}</Label>
         <p className="mb-4 h-5 text-sm text-dim">
-          {hover ? (hover.needs.length ? `${hover.name} builds on: ${hover.needs.join(", ")}` : `${hover.name} has no prerequisites`) : "Click a concept to be quizzed on it. A concept is known after two correct answers in a row."}
+          {hover ? (hover.needs.length ? `${hover.name} builds on: ${hover.needs.join(", ")}` : `${hover.name} has no prerequisites`) : graph.length ? "Click a concept to be quizzed on it. A concept is known after two correct answers in a row." : "Nothing here yet. Say “teach me …” and Sunday builds a learning plan for it."}
         </p>
         {subjects.map((s) => (
           <div key={s} className="mb-5">

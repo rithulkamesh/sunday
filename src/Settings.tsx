@@ -132,7 +132,7 @@ export function Settings() {
           <Row ok={d.embed_installed} name={`Memory search model ${d.embed_model} · ${d.facts} facts`} note={`run: ollama pull ${d.embed_model}`} />
           <Row ok={d.ocr} name="Screen text reader (exact pointing)" note="run scripts/build-ocr.sh" />
           <Row ok={d.stt_models} name="Speech models" note="run scripts/fetch-models.sh" />
-          <Row ok={d.concepts > 0} name={`Syllabus · ${d.concepts} concepts`} />
+          <Row ok={d.concepts > 0} name={`Learning map · ${d.concepts} concepts`} />
           <Row ok name={`${d.notes} notes imported · ${d.skills} skills`} />
         </ul>
       )}

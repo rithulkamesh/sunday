@@ -86,9 +86,9 @@ that makes sense on its own: name the subject instead of using pronouns, and kee
 of yours, and skip navigation, ads and boilerplate. confidence is 0 to 1: how clearly the text states it. event_date is the date the fact refers to \
 (YYYY-MM-DD, YYYY-MM or YYYY) if the text gives one, otherwise an empty string. At most 12 facts.";
 
-const EXTRACT_CHAT: &str = "You read a conversation between a student and their assistant and note lasting facts about the STUDENT: goals, exams and dates, \
-what they are studying, preferences, recurring difficulties. Only what the student said or clearly showed; never what the assistant said. Skip small talk \
-and one-off questions. Each fact is one self-contained sentence about the student. confidence is 0 to 1. event_date is a date it refers to if stated, \
+const EXTRACT_CHAT: &str = "You read a conversation between a user and their assistant and note lasting facts about the USER: goals, plans and dates, what they are learning \
+or working on, preferences, people and projects they mention, recurring difficulties. Only what the user said or clearly showed; never what the assistant said. \
+Skip small talk and one-off questions. Each fact is one self-contained sentence about the user. confidence is 0 to 1. event_date is a date it refers to if stated, \
 else an empty string. At most 6 facts, and none if nothing lasting was said.";
 
 fn schema() -> Value {
@@ -158,7 +158,7 @@ pub fn learn_page(db: &Db, model: &str, source: &str, title: &str, text: &str) -
     (added, dup)
 }
 
-/// Lasting facts about the student from a conversation (`transcript` is "Student: ...\nAssistant: ..." lines).
+/// Lasting facts about the user from a conversation (`transcript` is "User: ...\nAssistant: ..." lines).
 /// Stored as kind "chat": a guess you can review, never presented as something you said.
 pub fn learn_from_chat(db: &Db, model: &str, transcript: &str) -> (usize, usize) {
     match extract_with(model, EXTRACT_CHAT, transcript) {
@@ -170,7 +170,7 @@ pub fn learn_from_chat(db: &Db, model: &str, transcript: &str) -> (usize, usize)
     }
 }
 
-/// "remember that my exam is on 8 February": stored as you said it, with full confidence.
+/// "remember that my driving test is on 8 February": stored as you said it, with full confidence.
 pub fn remember(db: &Db, text: &str) -> bool {
     let f = Extracted { text: text.split_whitespace().collect::<Vec<_>>().join(" "), confidence: 1.0, event_date: String::new() };
     if f.text.len() < 3 {
@@ -237,10 +237,10 @@ mod tests {
     #[test]
     fn keyword_fallback_finds_facts_without_embeddings() {
         let db = Db::open(&std::env::temp_dir().join(format!("sunday-mem-{}-a.db", std::process::id()))).unwrap();
-        db.fact_add(&NewFact { kind: "user", source: "you", title: "", text: "My GATE exam is on 8 February.", confidence: 1.0, event_date: "" }, None);
+        db.fact_add(&NewFact { kind: "user", source: "you", title: "", text: "My driving test is on 8 February.", confidence: 1.0, event_date: "" }, None);
         db.fact_add(&NewFact { kind: "web", source: "https://x.dev", title: "x", text: "TCP uses slow start.", confidence: 0.9, event_date: "" }, None);
-        let hits: Vec<_> = keyword_scores(&db, "when is my exam").into_iter().map(|(id, _)| db.fact(id).unwrap().text).collect();
-        assert_eq!(hits, vec!["My GATE exam is on 8 February."]);
+        let hits: Vec<_> = keyword_scores(&db, "when is my driving test").into_iter().map(|(id, _)| db.fact(id).unwrap().text).collect();
+        assert_eq!(hits, vec!["My driving test is on 8 February."]);
         assert!(keyword_scores(&db, "the and for").is_empty());
     }
 
@@ -248,8 +248,8 @@ mod tests {
     #[test]
     fn remembers_and_recalls_by_meaning() {
         let db = Db::open(&std::env::temp_dir().join(format!("sunday-mem-{}-b.db", std::process::id()))).unwrap();
-        assert!(remember(&db, "my GATE exam is on the 8th of February"));
-        assert!(!remember(&db, "my GATE exam is on the 8th of February"), "the same fact twice is stored once");
+        assert!(remember(&db, "my driving test is on the 8th of February"));
+        assert!(!remember(&db, "my driving test is on the 8th of February"), "the same fact twice is stored once");
         let page = "The Banker's algorithm, devised by Edsger Dijkstra, avoids deadlock by granting a resource request only if the system stays in a safe state. \
             A state is safe if some ordering of the processes lets each one finish with the resources that are available. \
             The algorithm needs each process to declare its maximum resource demand in advance. It runs in O(m n^2) time for m resource types and n processes.";
@@ -277,9 +277,9 @@ mod tests {
         if std::env::var("SUNDAY_MEM_CALIBRATE").is_err() {
             return;
         }
-        let facts = ["my GATE exam is on the 8th of February", "The Banker's algorithm avoids deadlock by granting a resource request only if the system stays in a safe state",
+        let facts = ["my driving test is on the 8th of February", "The Banker's algorithm avoids deadlock by granting a resource request only if the system stays in a safe state",
             "TCP uses slow start and congestion avoidance to adapt its window", "I prefer studying in the mornings"];
-        let qs = [("when do I take my test?", 0), ("when is my exam", 0), ("how do you avoid deadlock safely?", 1), ("what is the banker's algorithm", 1),
+        let qs = [("when do I take my test?", 0), ("when is my driving test", 0), ("how do you avoid deadlock safely?", 1), ("what is the banker's algorithm", 1),
             ("how does congestion control work", 2), ("when do I like to study", 3), ("what is the capital of Peru", 9), ("who won the world cup", 9), ("explain virtual memory", 9)];
         let f = embed(&facts.iter().map(|s| s.to_string()).collect::<Vec<_>>(), false).unwrap();
         for (q, want) in qs {

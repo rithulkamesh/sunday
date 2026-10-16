@@ -1,14 +1,16 @@
 # Sunday
 
-Local-first voice tutor, starting with GATE prep. Everything runs on your machine:
-Silero VAD + wake-word spotter + Parakeet (speech in), Ollama (thinking), Kokoro (speech out), SQLite (memory).
+A local-first personal AI agent. It can teach you almost anything, look at your screen and point at things, read the web, and remember what matters,
+all on your own machine: Silero VAD + a wake-word spotter + Parakeet (speech in), Ollama (thinking), Kokoro (speech out), SQLite (memory).
+The long-term goal is a general agent that gets more capable the more it's used; today it's a voice assistant with a memory, a teacher, eyes and a browser.
 
 ## Run
 
 ```sh
 scripts/fetch-models.sh     # once: speech models into ~/.cache/sunday/models
 scripts/build-ocr.sh        # once, and again after updates: screen helper (exact text boxes, window list, cropping); needs Xcode command line tools
-ollama pull gemma4          # or: SUNDAY_MODEL=<any ollama model>
+ollama pull qwen3:4b-instruct && ollama pull nomic-embed-text-v2-moe
+ollama pull qwen3-vl:4b-instruct   # only for diagrams and other non-text screens
 bun install && bun run tauri dev
 ```
 
@@ -16,13 +18,14 @@ Say "sunday" or hold fn. Then talk, or type in the workspace.
 
 ## What it does
 
-**Study loop.** "Quiz me", "quiz me on graphs", "next question". One spoken-friendly question; your next answer is graded
-against a reference and stored with an error type. Each concept gets a review date (1 day, 3 days, then growing; a miss resets it).
-With no topic it picks: what's due, then your weakest concept, then the next unlocked concept on the syllabus.
+**Teaching anything.** "Teach me how to play guitar", "I want to learn linear algebra", "teach me Spanish". The first time, the model drafts a learning plan
+for the subject (6 to 10 concepts in order, each with what it builds on); then it teaches the next concept: a short explanation and a check question. Ask again to continue.
+Tried on guitar, linear algebra, sourdough, the Rust borrow checker and conversational Spanish.
 
-**Concept graph.** `src-tauri/domains/gate.txt` is the GATE (CS&IT + Data Science) syllabus with prerequisites, one concept per line
-(`concept < prereq, prereq`). A concept is *known* after two correct answers in a row; a wrong answer on a concept with shaky
-prerequisites points you at the gap. Add your own packs in the same format.
+**Practice.** "Quiz me", "quiz me on barre chords", "next question". One question you can answer out loud; your next answer is graded against a reference and stored with an error type.
+Each concept gets a review date (1 day, 3 days, then growing; a miss resets it). With no topic it picks what's due, then your weakest concept, then the next unlocked one in any plan.
+
+**Learning map.** Every plan joins one graph of concepts and prerequisites. A concept is *known* after two correct answers in a row; a wrong answer on a concept with shaky prerequisites points you at the gap.
 
 **Notes.** Import PDF / Markdown / text (Knowledge view, drag-drop, or ⌘K). Passages are indexed locally (SQLite FTS5).
 Chat answers quote them ("from your notes on …") and show the sources; quizzes on a concept draw on them. PDFs need `brew install poppler`.
@@ -42,7 +45,7 @@ When you say goodbye, lasting facts about you are saved as unconfirmed guesses. 
 
 **Skills.** Versioned, prompt-only capabilities (a template, an output schema, tests). No generated code, no tools.
 Lifecycle: proposed → experimental → approved; approval needs a passing test run on that version; any approved version can be rolled back.
-Describe one in the Skills view and the model drafts it. Voice: "run skill study.mnemonic on the OSI model".
+Describe one in the Skills view and the model drafts it. Voice: "run skill learn.mnemonic on the OSI model".
 
 **Decisions.** Every utterance becomes one typed `Action` (`decision.rs`) before anything runs, and is checked against what's
 permitted. `Rules` is the deterministic router; the `Decider` trait is where a smarter router goes.
@@ -60,5 +63,5 @@ The plain `qwen3-vl:4b` is a thinking model and roughly twice as slow; Sunday ca
 
 ## Not built yet
 
-Held-out evaluation and delayed-retention tests, a GATE question bank with answer keys (grading is LLM-as-judge),
-embeddings search, a router model (Laya or otherwise), tool gateway and approvals, sync, the floating-orb polish.
+Held-out evaluation and delayed-retention tests (grading is LLM-as-judge, with no answer keys), a router model (Laya or otherwise),
+a tool gateway and approvals, taking actions on your computer, sync, the floating-orb polish.

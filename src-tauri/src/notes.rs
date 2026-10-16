@@ -1,4 +1,4 @@
-//! Imported study material: extract text, split it into chunks, and build search queries.
+//! Imported documents: extract text, split it into chunks, and build search queries.
 use std::path::Path;
 
 const MIN_CHUNK: usize = 500;

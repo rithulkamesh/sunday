@@ -22,7 +22,7 @@ mod models;
 #[cfg(feature = "voice")]
 mod speaker;
 #[cfg(feature = "voice")]
-mod study;
+mod learn;
 #[cfg(feature = "voice")]
 mod stt;
 #[cfg(feature = "voice")]
@@ -403,7 +403,7 @@ fn ask(text: String, voice: bool, reply: tauri::State<Reply>) {
 
 #[cfg(feature = "voice")]
 #[tauri::command]
-fn study_state(db: tauri::State<Arc<db::Db>>) -> db::State {
+fn learn_state(db: tauri::State<Arc<db::Db>>) -> db::State {
     db.state()
 }
 
@@ -624,7 +624,7 @@ fn main() {
             #[cfg(feature = "voice")]
             ask,
             #[cfg(feature = "voice")]
-            study_state,
+            learn_state,
             #[cfg(feature = "voice")]
             graph,
             #[cfg(feature = "voice")]

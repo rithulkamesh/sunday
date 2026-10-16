@@ -1,7 +1,7 @@
 //! Typed decisions: every utterance becomes exactly one `Action` before anything runs.
 //! `Decider` is the seam where a smarter router (Laya, an LLM) plugs in; `Rules` is the
 //! deterministic default and also the fallback when a router fails or isn't confident.
-use crate::study;
+use crate::learn;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Action {
@@ -22,6 +22,8 @@ pub enum Action {
     /// Learn / forget the owner's voice.
     LearnVoice,
     ForgetVoice,
+    /// Teach a subject from scratch: build a learning plan and start the first lesson.
+    Teach(String),
     /// Read a web page (None: the one open in the front browser) and remember what it says.
     LearnPage(Option<String>),
     /// Search the web, read the best results, answer from them.
@@ -51,7 +53,7 @@ impl Decider for Rules {
     fn decide(&self, text: &str, has_pending: bool) -> Action {
         let t = norm(text);
         let has = |ks: &[&str]| ks.iter().any(|k| t.contains(k));
-        if has_pending && study::is_skip(text) {
+        if has_pending && learn::is_skip(text) {
             return Action::Skip;
         }
         if has(&[" learn my voice ", " remember my voice ", " learn my voice. ", " train on my voice ", " recognize my voice ", " recognise my voice "]) {
@@ -60,7 +62,7 @@ impl Decider for Rules {
         if has(&[" forget my voice ", " reset my voice ", " unlearn my voice "]) {
             return Action::ForgetVoice;
         }
-        if let Some(url) = first_url(text).filter(|_| has(&[" read ", " learn ", " save ", " remember ", " summarize ", " summarise ", " add ", " study "])) {
+        if let Some(url) = first_url(text).filter(|_| has(&[" read ", " learn ", " save ", " remember ", " summarize ", " summarise ", " add "])) {
             return Action::LearnPage(Some(url));
         }
         if has(&[" read this page ", " learn this page ", " remember this page ", " save this page ", " learn from this page ", " read this tab ", " learn this tab ", " save this tab ",
@@ -72,7 +74,7 @@ impl Decider for Rules {
                 return Action::Research(q.trim().to_string());
             }
         }
-        // Original wording and casing are kept: "my GATE exam" shouldn't become "my gate exam".
+        // Original wording and casing are kept: "My Piano Exam" shouldn't be lowercased.
         let ascii = text.to_ascii_lowercase();
         for lead in ["remember that ", "note that ", "keep in mind that ", "make a note that "] {
             if let Some(i) = ascii.find(lead) {
@@ -98,7 +100,10 @@ impl Decider for Rules {
                 return Action::Notes(q.trim().to_string());
             }
         }
-        if let Some(topic) = study::quiz_request(text) {
+        if let Some(topic) = learn::teach_request(text) {
+            return Action::Teach(topic);
+        }
+        if let Some(topic) = learn::quiz_request(text) {
             return Action::Quiz(topic);
         }
         if has_pending {
@@ -113,6 +118,7 @@ impl Decider for Rules {
 pub fn permitted(a: &Action, skill_exists: impl Fn(&str) -> bool, web_on: bool) -> Result<(), String> {
     match a {
         Action::LearnPage(_) | Action::Research(_) if !web_on => Err("Web access is off. Turn it on in Settings, then ask again.".into()),
+        Action::Teach(t) if t.trim().len() < 2 => Err("What would you like to learn?".into()),
         Action::Research(q) if q.trim().is_empty() => Err("What should I look up?".into()),
         Action::Remember(t) if t.trim().len() < 3 => Err("What should I remember?".into()),
         Action::Skill { id, .. } if !skill_exists(id) => Err(format!("There's no approved skill called {id}.")),
@@ -134,6 +140,9 @@ mod tests {
     #[test]
     fn routes_utterances() {
         assert_eq!(d("hello there", false), Chat);
+        assert_eq!(d("Sunday, teach me how to play guitar", false), Teach("how to play guitar".into()));
+        assert_eq!(d("I want to learn linear algebra", false), Teach("linear algebra".into()));
+        assert_eq!(d("learn this page", false), LearnPage(None)); // reading a page isn't a lesson
         assert_eq!(d("quiz me on graphs", false), Quiz(Some("graphs".into())));
         assert_eq!(d("it needs four conditions", true), Answer);
         assert_eq!(d("skip", true), Skip);
@@ -141,7 +150,7 @@ mod tests {
         assert!(matches!(d("Can you explain what's on my screen?", false), Screen(_)));
         assert!(matches!(d("explain this question", true), Screen(_))); // wins over answering
         assert_eq!(d("clear the screen", false), ClearScreen);
-        assert_eq!(d("Sunday, remember that my GATE exam is on 8 February.", false), Remember("my GATE exam is on 8 February".into()));
+        assert_eq!(d("Sunday, remember that my driving test is on 8 February.", false), Remember("my driving test is on 8 February".into()));
         assert_eq!(d("learn this page", false), LearnPage(None));
         assert_eq!(d("explain this page", false), Screen("explain this page".into())); // looking at it is not saving it
         assert_eq!(d("please read https://example.com/os-notes.", false), LearnPage(Some("https://example.com/os-notes".into())));
@@ -151,15 +160,15 @@ mod tests {
         assert_eq!(d("Sunday, learn my voice", false), LearnVoice);
         assert_eq!(d("forget my voice", false), ForgetVoice);
         assert_eq!(d("what do my notes say about deadlock", false), Notes("deadlock".into()));
-        assert_eq!(d("run skill study.mnemonic on osi model", false), Skill { id: "study.mnemonic".into(), input: "osi model".into() });
+        assert_eq!(d("run skill learn.mnemonic on osi model", false), Skill { id: "learn.mnemonic".into(), input: "osi model".into() });
     }
 
     #[test]
     fn validates_before_running() {
-        let known = |id: &str| id == "study.mnemonic";
-        assert!(permitted(&Skill { id: "study.mnemonic".into(), input: "x".into() }, known, false).is_ok());
+        let known = |id: &str| id == "learn.mnemonic";
+        assert!(permitted(&Skill { id: "learn.mnemonic".into(), input: "x".into() }, known, false).is_ok());
         assert!(permitted(&Skill { id: "nope".into(), input: "x".into() }, known, false).is_err());
-        assert!(permitted(&Skill { id: "study.mnemonic".into(), input: " ".into() }, known, false).is_err());
+        assert!(permitted(&Skill { id: "learn.mnemonic".into(), input: " ".into() }, known, false).is_err());
         assert!(permitted(&Chat, known, false).is_ok());
         // The web is opt-in: nothing leaves the machine until it's switched on.
         assert!(permitted(&Research("deadlock".into()), known, false).unwrap_err().contains("Web access is off"));

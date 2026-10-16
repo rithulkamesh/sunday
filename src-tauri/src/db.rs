@@ -115,7 +115,7 @@ pub struct State {
     pub weak: Vec<Weak>,
     pub recent: Vec<Recent>,
     pub pending: Option<String>,
-    /// Concepts known / in the syllabus.
+    /// Concepts known / in the learning map.
     pub coverage: (usize, usize),
 }
 
@@ -148,7 +148,6 @@ impl Db {
              CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(text, doc UNINDEXED, n UNINDEXED);",
         )?;
         let db = Self(Mutex::new(c));
-        db.seed(include_str!("../domains/gate.txt"));
         for m in crate::skills::builtins() {
             if db.skill(&m.id, Some(m.version)).is_none() {
                 db.skill_put(&m);
@@ -157,6 +156,8 @@ impl Db {
         Ok(db)
     }
 
+    /// Loads a text pack ("# Subject" headers, "concept < prereq, prereq" lines). Only tests use it: plans are built on demand.
+    #[cfg(test)]
     /// Loads a domain pack: "# Subject" headers, then "concept < prereq, prereq" lines. Safe to re-run.
     pub fn seed(&self, pack: &str) {
         let c = self.0.lock().unwrap();
@@ -176,7 +177,40 @@ impl Db {
         }
     }
 
-    /// The syllabus with the learner's status on each concept: new, learning, or known (two correct reviews in a row).
+    /// Stores a learning plan: `concepts` in learning order, each with the earlier ones it builds on. Safe to repeat.
+    pub fn add_plan(&self, subject: &str, concepts: &[(String, Vec<String>)]) {
+        let c = self.0.lock().unwrap();
+        let mut n: i64 = c.query_row("SELECT COALESCE(MAX(ord), 0) FROM concepts", [], |r| r.get(0)).unwrap_or(0);
+        for (name, needs) in concepts {
+            n += 1;
+            let _ = c.execute("INSERT OR IGNORE INTO concepts(name, subject, ord) VALUES (?,?,?)", params![name, subject, n]);
+            for r in needs {
+                let _ = c.execute("INSERT OR IGNORE INTO prereqs(concept, requires) VALUES (?,?)", params![name, r]);
+            }
+        }
+    }
+
+    pub fn has_subject(&self, subject: &str) -> bool {
+        self.0.lock().unwrap().query_row("SELECT 1 FROM concepts WHERE subject = ? LIMIT 1", [subject], |_| Ok(())).optional().unwrap().is_some()
+    }
+
+    /// The next concept of `subject` to teach: not introduced yet, with every prerequisite at least introduced
+    /// (teaching moves on as the learner is introduced to things; quizzes are what turn "learning" into "known").
+    pub fn next_to_teach(&self, subject: &str) -> Option<String> {
+        let g = self.graph();
+        let introduced = |n: &str| g.iter().any(|x| x.name == n && x.status != "new");
+        g.iter().find(|n| n.subject == subject && n.status == "new" && n.needs.iter().all(|r| introduced(r))).map(|n| n.name.clone())
+    }
+
+    /// Marks a concept as introduced: it joins the review schedule (first review tomorrow) as "learning".
+    pub fn introduce(&self, concept: &str) {
+        let _ = self.0.lock().unwrap().execute(
+            "INSERT OR IGNORE INTO reviews(concept, due, interval_days, ease, streak) VALUES (?,?,?,?,?)",
+            params![concept, now() + DAY, 1.0, 2.5, 0],
+        );
+    }
+
+    /// The learning map with the learner's status on each concept: new, learning, or known (two correct reviews in a row).
     pub fn graph(&self) -> Vec<Node> {
         let c = self.0.lock().unwrap();
         let mut st = c
@@ -200,7 +234,7 @@ impl Db {
         .collect()
     }
 
-    /// The next concept to learn: not started, with every prerequisite known (syllabus order).
+    /// The next concept to practise: not started, with every prerequisite known (plan order).
     pub fn frontier(&self) -> Option<String> {
         let g = self.graph();
         let known = |n: &str| g.iter().any(|x| x.name == n && x.status == "known");
@@ -487,23 +521,46 @@ mod tests {
         assert_eq!(db.recent_questions("graphs", 5), vec!["What is graphs?"]);
     }
 
+    const SAMPLE: &str = "# Logic\nprepositions\nconnectives < prepositions\nquantifiers < connectives\n# Sets\nsets\nrelations < sets\n";
+
     #[test]
     fn graph_frontier_and_gaps() {
         let db = Db::init(Connection::open_in_memory().unwrap()).unwrap();
-        let g = db.graph();
-        assert!(g.len() > 80, "syllabus seeded: {}", g.len());
-        assert_eq!(db.frontier().as_deref(), Some("propositional logic")); // first concept with no prerequisites
-        assert_eq!(db.gaps("predicate logic"), vec!["propositional logic"]);
+        assert!(db.graph().is_empty() && db.frontier().is_none(), "nothing is built in: plans are made on demand");
+        db.seed(SAMPLE);
+        assert_eq!(db.graph().len(), 5);
+        assert_eq!(db.frontier().as_deref(), Some("prepositions")); // first concept with no prerequisites
+        assert_eq!(db.gaps("connectives"), vec!["prepositions"]);
         // Two correct answers in a row make a concept "known", which unlocks what depends on it.
-        let a = p("propositional logic");
+        let a = p("prepositions");
         db.attempt(&a, "x", Verdict::Correct, "none", "");
         db.attempt(&a, "x", Verdict::Correct, "none", "");
-        assert!(db.gaps("predicate logic").is_empty());
-        assert_ne!(db.frontier().as_deref(), Some("propositional logic"));
-        assert_eq!(db.state().coverage.0, 1);
-        let db2 = Db::init(Connection::open_in_memory().unwrap()).unwrap();
-        db2.seed("# T\na\nb < a\n");
-        assert_eq!(db2.graph().iter().filter(|n| n.subject == "T").count(), 2);
+        assert!(db.gaps("connectives").is_empty());
+        assert_eq!(db.frontier().as_deref(), Some("connectives"));
+        assert_eq!(db.state().coverage, (1, 5));
+    }
+
+    #[test]
+    fn plans_are_taught_in_order_for_any_subject() {
+        let db = Db::init(Connection::open_in_memory().unwrap()).unwrap();
+        assert!(!db.has_subject("guitar"));
+        let plan = vec![("open chords".to_string(), vec![]), ("strumming".to_string(), vec!["open chords".to_string()]), ("barre chords".to_string(), vec!["open chords".to_string(), "strumming".to_string()])];
+        db.add_plan("guitar", &plan);
+        db.add_plan("guitar", &plan); // repeating changes nothing
+        assert!(db.has_subject("guitar") && db.graph().len() == 3);
+        // Teaching moves on once a concept is introduced, without waiting for quiz mastery.
+        assert_eq!(db.next_to_teach("guitar").as_deref(), Some("open chords"));
+        db.introduce("open chords");
+        assert_eq!(db.graph()[0].status, "learning");
+        assert_eq!(db.next_to_teach("guitar").as_deref(), Some("strumming"));
+        db.introduce("strumming");
+        db.introduce("barre chords");
+        assert_eq!(db.next_to_teach("guitar"), None);
+        assert_eq!(db.next_to_teach("piano"), None);
+        // A second subject sits beside the first.
+        db.add_plan("baking", &[("measuring".to_string(), vec![])]);
+        assert_eq!(db.next_to_teach("baking").as_deref(), Some("measuring"));
+        assert!(db.due().is_empty(), "introduced concepts are due tomorrow, not now");
     }
 
     #[test]
@@ -530,16 +587,16 @@ mod tests {
     #[test]
     fn skills_resolve_to_the_newest_approved_version() {
         let db = Db::init(Connection::open_in_memory().unwrap()).unwrap();
-        assert!(db.skill("study.mnemonic", None).is_none()); // built-ins start experimental
-        assert_eq!(db.skill("study.mnemonic", Some(1)).unwrap().status, "experimental");
-        db.skill_set_status("study.mnemonic", 1, "approved");
-        let mut v2 = db.skill("study.mnemonic", Some(1)).unwrap();
+        assert!(db.skill("learn.mnemonic", None).is_none()); // built-ins start experimental
+        assert_eq!(db.skill("learn.mnemonic", Some(1)).unwrap().status, "experimental");
+        db.skill_set_status("learn.mnemonic", 1, "approved");
+        let mut v2 = db.skill("learn.mnemonic", Some(1)).unwrap();
         v2.version = 2;
         db.skill_put(&v2);
-        db.skill_set_status("study.mnemonic", 2, "approved");
-        assert_eq!(db.skill("study.mnemonic", None).unwrap().version, 2);
-        db.skill_set_status("study.mnemonic", 2, "deprecated"); // rollback
-        assert_eq!(db.skill("study.mnemonic", None).unwrap().version, 1);
+        db.skill_set_status("learn.mnemonic", 2, "approved");
+        assert_eq!(db.skill("learn.mnemonic", None).unwrap().version, 2);
+        db.skill_set_status("learn.mnemonic", 2, "deprecated"); // rollback
+        assert_eq!(db.skill("learn.mnemonic", None).unwrap().version, 1);
         db.kv_set("model", "qwen3:4b");
         assert_eq!(db.kv_get("model").as_deref(), Some("qwen3:4b"));
     }
