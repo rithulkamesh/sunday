@@ -43,8 +43,8 @@ Voice details: "Sunday" or fn wakes it; say "stop", talk over it, or press fn to
 
 ## Models
 
-Defaults: `qwen3:4b` (text) and `qwen3-vl:4b` (screen). Override with `SUNDAY_MODEL` / `SUNDAY_VISION`, or pick in Settings / ⌘K.
-`qwen3-vl:4b` is a thinking model (slow, ~20 s per look); `qwen3-vl:4b-instruct` is a drop-in if you want it faster.
+Defaults: `qwen3:4b` (text) and `qwen3-vl:4b-instruct` (screen, ~10 s per look once warm). Override with `SUNDAY_MODEL` / `SUNDAY_VISION`, or pick in Settings / ⌘K.
+The plain `qwen3-vl:4b` is a thinking model and roughly twice as slow; Sunday can read either.
 
 ## Not built yet
 

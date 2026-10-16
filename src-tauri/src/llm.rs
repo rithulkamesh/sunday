@@ -30,7 +30,7 @@ impl std::error::Error for UserMsg {}
 
 const URL: &str = "http://localhost:11434/api/chat";
 const MODEL: &str = "qwen3:4b";
-pub const VISION: &str = "qwen3-vl:4b";
+pub const VISION: &str = "qwen3-vl:4b-instruct";
 
 /// SUNDAY_MODEL, else the model picked in the palette, else the default.
 pub fn model_name(db: &Db) -> String {
