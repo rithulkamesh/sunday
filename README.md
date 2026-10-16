@@ -1,8 +1,13 @@
 # Sunday
 
-A local-first personal AI agent. It can teach you almost anything, look at your screen and point at things, read the web, and remember what matters,
-all on your own machine: Silero VAD + a wake-word spotter + Parakeet (speech in), Ollama (thinking), Kokoro (speech out), SQLite (memory).
-The long-term goal is a general agent that gets more capable the more it's used; today it's a voice assistant with a memory, a teacher, eyes and a browser.
+**S.U.N.D.A.Y.** — **S**ees · **U**nderstands · **N**otices · **D**ecides · **A**cts · **Y**ours
+
+Tony Stark has F.R.I.D.A.Y.; this is the one that lives on your own computer and answers only to you. A local-first personal AI agent that teaches you
+almost anything, looks at your screen and points at things, reads the web, and remembers what matters. Nothing leaves your machine unless you switch the web on:
+Silero VAD + a wake-word spotter + Parakeet (speech in), Ollama (thinking), Kokoro (speech out), SQLite (memory).
+
+Honest status: *Sees* (screen, diagrams), *Understands* (teaching, notes), *Notices* (memory, voice) and *Decides* (typed actions, rules router) exist today.
+*Acts* (doing things on your computer, behind approvals) is the next build. The long-term goal is a general agent that gets more capable the more it's used.
 
 ## Run
 
@@ -33,8 +38,8 @@ Chat answers quote them ("from your notes on …") and show the sources; quizzes
 **Screen.** "Explain what's on my screen", "what is this question", "point to …": takes one screenshot, a local vision model
 explains it, Sunday speaks, and boxes/circles/arrows are drawn on a click-through overlay for 25 s ("clear the screen" removes them).
 It knows what's going on, not just what's visible: which app and window is in front and what else is open (from the macOS window list, no extra permission), and "explain this page / window / PDF" looks at just the front window.
-Diagrams get a closer look: if the first pass sees a diagram, chart or figure it says so, crops that region at full resolution, reads its labels, and explains how the parts connect, drawing arrows between them ("Client → Load Balancer → Server A").
-Pointing at text is exact: macOS's text recogniser (`scripts/ocr.swift`) finds every line's box, the model just picks line numbers. Only for non-text things (diagrams, icons) does it use the model's own coordinates, which are approximate. Only on request; the image is read once, sent to local Ollama only, and deleted. Needs Screen Recording permission. A look takes ~25 s; a diagram with a closer look, up to a minute.
+Pictures and diagrams (screens with a few scattered labels, or visual questions) go to the vision model in one pass; it answers in two short sentences and marks what it mentions, and rough boxes are snapped to the text under them. Ordinary text screens skip the image and answer from the on-screen text, which is much faster.
+Pointing at text is exact: macOS's text recogniser (`scripts/ocr.swift`) finds every line's box, the model just picks line numbers. Only for non-text things (diagrams, icons) does it use the model's own coordinates, which are approximate. Only on request; the image is read once, sent to local Ollama only, and deleted. Needs Screen Recording permission. A text screen takes ~8 s, a picture ~10 to 20 s.
 
 **Memory and the web.** Long-term memory is a store of atomic facts, each with where it came from (you told me / read on a page / inferred from a conversation),
 its confidence, and when it refers to; recalled by meaning (local embeddings) and cited in answers. The design follows Devsper's memory service (`devsper/flow/svc/memory`).

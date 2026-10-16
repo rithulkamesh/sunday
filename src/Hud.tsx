@@ -47,7 +47,7 @@ export function Hud() {
           bloomOpacity={0.6}
           idle={0.1}
         >
-          <div className="flex items-center gap-4 rounded-[28px] bg-canvas px-6 py-3.5">
+          <div className="flex items-center gap-4 rounded-[28px] bg-black/45 px-6 backdrop-blur-2xl py-3.5">
             <Status thinking={state === "thinking"} />
             {text && <Words text={text} />}
           </div>

@@ -4,8 +4,8 @@ import { listen } from "@tauri-apps/api/event";
 type Box = { x: number; y: number; w: number; h: number };
 type Mark = Box & { kind: "box" | "circle" | "underline" | "arrow"; label: string; to?: Box | null };
 
-const INK = "#7dd3fc"; // cyan, with a violet glow
-const GLOW = "drop-shadow(0 0 6px #a78bfa) drop-shadow(0 0 14px #7dd3fc66)";
+const INK = "#38bdf8"; // one crisp cyan line, a soft shadow so it reads on any background
+const GLOW = "drop-shadow(0 0 1.5px #000a) drop-shadow(0 1px 4px #0006)";
 
 /** Click-through layer over the screen: draws what Sunday is pointing at while it explains. */
 export function Overlay() {
@@ -44,16 +44,16 @@ export function Overlay() {
       {marks.map((m, i) => {
         const r = px(m);
         const delay = `${i * 220}ms`;
-        const common = { stroke: INK, strokeWidth: 3, fill: "none", className: "mark", style: { animationDelay: delay } };
+        const common = { stroke: INK, strokeWidth: 2.5, fill: "none", className: "mark", style: { animationDelay: delay } };
         // The arrow comes in from the upper left and stops at the item's edge.
         const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
         const tail = { x: Math.max(20, cx - 170), y: Math.max(20, cy - 120) };
         // The label sits above its mark, or below it near the top edge, so it never covers what it points at.
         const above = r.y >= 44;
-        const ly = above ? r.y - 34 : r.y + r.h + 10;
+        const ly = above ? r.y - 30 : r.y + r.h + 10;
         return (
           <g key={i}>
-            {m.kind === "box" && <rect x={r.x - 4} y={r.y - 4} width={r.w + 8} height={r.h + 8} rx={10} {...common} fill="#7dd3fc14" />}
+            {m.kind === "box" && <rect x={r.x - 6} y={r.y - 4} width={r.w + 12} height={r.h + 8} rx={6} {...common} fill="#38bdf810" />}
             {m.kind === "circle" && <ellipse cx={cx} cy={cy} rx={r.w / 2 + 8} ry={r.h / 2 + 8} {...common} />}
             {m.kind === "underline" && <line x1={r.x} y1={r.y + r.h + 4} x2={r.x + r.w} y2={r.y + r.h + 4} {...common} strokeWidth={4} strokeLinecap="round" />}
             {m.kind === "arrow" && m.to && (() => {
@@ -65,8 +65,8 @@ export function Overlay() {
             {m.kind === "arrow" && !m.to && <line x1={tail.x} y1={tail.y} x2={r.x + r.w * 0.1} y2={r.y + r.h * 0.1} {...common} strokeLinecap="round" markerEnd="url(#head)" />}
             {m.label && (
               <g className="mark" style={{ animationDelay: delay }}>
-                <rect x={Math.min(r.x, size.w - 200)} y={ly} width={m.label.length * 8.4 + 20} height={26} rx={13} fill="#0a0a0acc" stroke={INK} />
-                <text x={Math.min(r.x, size.w - 200) + 10} y={ly + 18} fill="#fff" fontSize="14" fontFamily="IBM Plex Sans, system-ui">
+                <rect x={Math.min(r.x, size.w - 200)} y={ly} width={m.label.length * 7.4 + 18} height={22} rx={6} fill="#0a0a0ae6" />
+                <text x={Math.min(r.x, size.w - 200) + 9} y={ly + 15} fill="#fff" fontSize="12.5" fontFamily="IBM Plex Sans, system-ui">
                   {m.label}
                 </text>
               </g>

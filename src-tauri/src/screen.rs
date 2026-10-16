@@ -16,7 +16,6 @@ const MAX_MARKS: usize = 8;
 /// Longest screenshot edge sent to the model: the OCR carries the fine text, so the image can be small.
 const MAX_EDGE: &str = "896";
 /// A closer look at a figure gets more pixels: diagrams carry their meaning in small details.
-const ZOOM_EDGE: &str = "1280";
 
 /// A thing to point at, in 0..1000 coordinates relative to the image it was found in (top-left origin).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -83,12 +82,6 @@ impl Region {
     fn clamped(self) -> Region {
         let (x, y) = (self.x.clamp(0.0, 999.0), self.y.clamp(0.0, 999.0));
         Region { x, y, w: self.w.clamp(1.0, 1000.0 - x), h: self.h.clamp(1.0, 1000.0 - y) }
-    }
-
-    /// Grown by `f` of its size on every side: a model's idea of "the diagram" is usually a bit too tight.
-    fn padded(self, f: f64) -> Region {
-        let (px, py) = (self.w * f, self.h * f);
-        Region { x: self.x - px, y: self.y - py, w: self.w + 2.0 * px, h: self.h + 2.0 * py }
     }
 
     /// Fraction of the display covered.
@@ -176,10 +169,6 @@ fn left_aligned_block(lines: &[&Line]) -> bool {
     buckets.values().max().copied().unwrap_or(0) * 2 >= lines.len()
 }
 
-fn text_block(r: Region, lines: &[Line]) -> bool {
-    let inside: Vec<&Line> = lines.iter().filter(|l| l.x + l.w / 2.0 >= r.x && l.x + l.w / 2.0 <= r.x + r.w && l.y + l.h / 2.0 >= r.y && l.y + l.h / 2.0 <= r.y + r.h).collect();
-    inside.len() > MAX_FIGURE_LINES || left_aligned_block(&inside)
-}
 
 /// "this window", "this page"...: look at the front window only, not the whole display.
 fn wants_window(task: &str) -> bool {
@@ -200,26 +189,10 @@ struct Seen {
 }
 
 #[derive(Deserialize)]
-struct Zoom {
-    #[serde(default)]
-    needed: bool,
-    #[serde(default)]
-    x: f64,
-    #[serde(default)]
-    y: f64,
-    #[serde(default)]
-    w: f64,
-    #[serde(default)]
-    h: f64,
-}
-
-#[derive(Deserialize)]
 struct Look {
     explanation: String,
     #[serde(default)]
     marks: Vec<Mark>,
-    #[serde(default)]
-    zoom: Option<Zoom>,
 }
 
 const POINTING: &str = "`marks` point at the specific things you mention. kind is box (a region), circle (a small item), underline (a line of text) or arrow (a pointer to an item). \
@@ -230,19 +203,10 @@ Only for things that are not text (pictures, diagram parts, icons) set `line` to
 
 fn system() -> String {
     format!("You see a screenshot of the user's screen and explain what they ask about, like a patient friend sitting next to them. Speak to them as \"you\"; never begin with \"The user\". \
-You are also told which app and window is in front and what else is open. That only says where they are: say what they are doing and what the content is about \
-(for example: you're reading a terminal session about building a voice assistant). Never explain what an app is or does, and never guess that from its name. Window titles are only labels (a file name or size), not the content. \
-Cover the whole screen's main subject, not one corner of it: if it is a picture or diagram, say what it is about and how its parts relate. \
-`explanation` is at most three short spoken sentences: plain words, no markdown, and refer to things by what they say or look like. \
-At most four marks. Point at the content the user is working on, never at window chrome (menu bar, tabs, title bars, status bars, notifications) unless they ask. \
-If the screen has a diagram, chart, graph, figure, flowchart, circuit or other small detailed picture that needs a closer look to explain properly, set zoom.needed true and give its region \
-(0..1000 of the image, x,y top-left, w,h the size, slightly generous). If the whole screen is one picture or diagram, zoom to all of it. Pages of text, code and terminals are not diagrams. Otherwise zoom.needed is false and x,y,w,h are 0. {POINTING}")
-}
-
-fn system_figure() -> String {
-    format!("You see a zoomed-in figure from the user's screen: a diagram, chart, graph, circuit, flowchart, table or picture. Explain it like a patient friend: what kind of figure it is, \
-its main parts, and how they connect or what flows from what (for a chart: the axes and the trend). At most four short spoken sentences, plain words, no markdown. Speak to them as \"you\". \
-At most five marks, one per part you mention. {POINTING}")
+You are also told which app and window is in front. That only says where they are: never explain what an app is, never mention the browser or window, and window titles are only labels (a file name or size), not content. \
+Say what the screen is about and how its main parts relate: the whole subject, not one corner. \
+`explanation` is at most two short spoken sentences, under 35 words: plain words, no markdown. \
+At most three marks, only for things you mention, never window chrome. Prefer text lines: when the thing has text on it, mark that text's `line` (the box is then exact). {POINTING}")
 }
 
 /// The text path's reply is plain text so it can be spoken as it streams: sentences, then marker lines naming
@@ -337,20 +301,36 @@ fn needs_vision(task: &str, lines: &[Line], category: &str) -> bool {
     lines.len() < 8 || (lines.len() < MAX_FIGURE_LINES && !left_aligned_block(&all)) || VISUAL.iter().any(|k| t.contains(k)) || ["graphics", "photo", "video"].iter().any(|k| category.contains(k))
 }
 
-fn schema(zoom: bool) -> Value {
-    let mut s = json!({"type": "object", "required": ["explanation", "marks"], "properties": {
+fn schema() -> Value {
+    json!({"type": "object", "required": ["explanation", "marks"], "properties": {
         "explanation": {"type": "string"},
         "marks": {"type": "array", "items": {"type": "object", "required": ["kind", "line", "to_line", "x", "y", "w", "h", "label"], "properties": {
             "kind": {"type": "string", "enum": ["box", "circle", "underline", "arrow"]},
             "line": {"type": "integer"}, "to_line": {"type": "integer"},
             "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"},
-            "label": {"type": "string"}}}}}});
-    if zoom {
-        s["required"] = json!(["explanation", "marks", "zoom"]);
-        s["properties"]["zoom"] = json!({"type": "object", "required": ["needed", "x", "y", "w", "h"],
-            "properties": {"needed": {"type": "boolean"}, "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"}}});
+            "label": {"type": "string"}}}}}})
+}
+
+/// A mark the model placed by coordinates is rough; if text lies under it, hug that text instead.
+/// ponytail: centre-inside test on a padded box; a mark over a picture with no text stays as drawn.
+fn snap_to_text(m: &mut Mark, lines: &[Line]) {
+    if !matches!(m.kind.as_str(), "box" | "circle") {
+        return;
     }
-    s
+    let (px, py) = (m.w * 0.1, m.h * 0.1);
+    let inside: Vec<&Line> = lines.iter().filter(|l| {
+        let (cx, cy) = (l.x + l.w / 2.0, l.y + l.h / 2.0);
+        cx >= m.x - px && cx <= m.x + m.w + px && cy >= m.y - py && cy <= m.y + m.h + py
+    }).collect();
+    if inside.is_empty() {
+        return;
+    }
+    let x0 = inside.iter().map(|l| l.x).fold(f64::MAX, f64::min);
+    let y0 = inside.iter().map(|l| l.y).fold(f64::MAX, f64::min);
+    let x1 = inside.iter().map(|l| l.x + l.w).fold(0.0, f64::max);
+    let y1 = inside.iter().map(|l| l.y + l.h).fold(0.0, f64::max);
+    (m.x, m.y, m.w, m.h) = (x0, y0, x1 - x0, y1 - y0);
+    m.kind = "box".into();
 }
 
 /// Marks that name a text line take that line's exact box from the OCR. The rest are the model's own
@@ -366,6 +346,7 @@ fn sanitize(marks: Vec<Mark>, lines: &[Line]) -> Vec<Mark> {
                 }
             } else {
                 m.line = -1;
+                snap_to_text(&mut m, lines);
             }
             // A connector needs both ends to be real text lines.
             m.to = usize::try_from(m.to_line).ok().and_then(|i| lines.get(i)).filter(|_| m.line >= 0 && m.line != m.to_line && m.kind == "arrow").map(|l| Region { x: l.x, y: l.y, w: l.w, h: l.h });
@@ -496,9 +477,9 @@ fn preload(model: &str) {
     });
 }
 
-fn look(model: &str, seen: &Seen, system: &str, zoom: bool, user: &str) -> Res<Look> {
+fn look(model: &str, seen: &Seen, system: &str, user: &str) -> Res<Look> {
     // The line list plus the image need more than Ollama's default 4096-token context.
-    let body = json!({"model": model, "stream": false, "think": false, "keep_alive": llm::KEEP_VISION, "format": schema(zoom), "options": {"num_ctx": 8192},
+    let body = json!({"model": model, "stream": false, "think": false, "keep_alive": llm::KEEP_VISION, "format": schema(), "options": {"num_ctx": 8192},
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user, "images": [seen.image]}]});
     for _ in 0..2 {
         let v: Value = match ureq::post("http://localhost:11434/api/chat").timeout(std::time::Duration::from_secs(240)).send_json(&body) {
@@ -550,33 +531,11 @@ fn analyse(full: &Path, context: &str, category: &str, region: Region, task: &st
     }
     preload(model);
     let t = std::time::Instant::now();
-    let l = look(model, &seen, &system(), true, &prompt(task, context, &seen.lines))?;
+    let l = look(model, &seen, &system(), &prompt(task, context, &seen.lines))?;
     eprintln!("[perf] screen: vision answer in {:?}", t.elapsed());
     let marks: Vec<Mark> = sanitize(l.marks, &seen.lines).iter().map(|m| region.to_display(m)).collect();
     let first = Explained { text: l.explanation.trim().to_string(), marks, spoken: false };
 
-    if let Some(z) = l.zoom.filter(|z| z.needed) {
-        let zr = region.sub(Region { x: z.x, y: z.y, w: z.w, h: z.h }).padded(0.15).clamped();
-        // Lines are relative to what was viewed; zoom coordinates likewise (before mapping to the display).
-        let crowded = text_block(Region { x: z.x, y: z.y, w: z.w, h: z.h }, &seen.lines);
-        if crowded {
-            eprintln!("[screen] zoom ignored: that region is mostly text, not a figure");
-        }
-        if !crowded && (0.02..0.9).contains(&zr.area()) && tool().is_some() {
-            progress("That looks like a diagram. Let me look closer.");
-            let closer = view(full, zr, ZOOM_EDGE).and_then(|s2| {
-                let user = prompt(&format!("{task} (Explain this figure in detail.)"), context, &s2.lines);
-                look(model, &s2, &system_figure(), false, &user).map(|l2| (s2, l2))
-            });
-            match closer {
-                Ok((s2, l2)) => {
-                    let marks = sanitize(l2.marks, &s2.lines).iter().map(|m| zr.to_display(m)).collect();
-                    return Ok(Explained { text: l2.explanation.trim().to_string(), marks, spoken: false });
-                }
-                Err(e) => eprintln!("[screen] closer look failed ({e}); using the first look"),
-            }
-        }
-    }
     Ok(first)
 }
 
@@ -734,8 +693,6 @@ mod tests {
         let z = win.sub(Region { x: 0.0, y: 0.0, w: 500.0, h: 500.0 });
         assert_eq!((z.x, z.w, z.h), (500.0, 250.0, 500.0));
         assert!(Region { x: 990.0, y: 990.0, w: 500.0, h: 500.0 }.clamped().w <= 10.0);
-        let p = Region { x: 400.0, y: 400.0, w: 200.0, h: 100.0 }.padded(0.15);
-        assert_eq!((p.x, p.y, p.w, p.h), (370.0, 385.0, 260.0, 130.0));
     }
 
     const DESK: &str = r#"{"display":{"w":1680,"h":1050},"front":{"app":"Preview","pid":7},"windows":[
@@ -744,16 +701,12 @@ mod tests {
         {"app":"Spotify","title":"","x":0,"y":30,"w":1680,"h":1020,"pid":9}]}"#;
 
     #[test]
-    fn text_blocks_are_not_figures() {
-        let l = |x: f64, y: f64| Line { text: "t".into(), x, y, w: 40.0, h: 10.0 };
-        let whole = Region::WHOLE;
-        // 60 lines: a page. 5 lines on one left edge: terminal output or code.
-        assert!(text_block(whole, &(0..60).map(|i| l(100.0 + (i % 7) as f64 * 90.0, i as f64 * 15.0)).collect::<Vec<_>>()));
-        assert!(text_block(whole, &(0..5).map(|i| l(100.0, 100.0 + i as f64 * 20.0)).collect::<Vec<_>>()));
-        // The architecture diagram's labels are scattered.
-        let diagram = [l(562.0, 160.0), l(540.0, 302.0), l(463.0, 466.0), l(642.0, 467.0), l(469.0, 634.0), l(639.0, 635.0)];
-        assert!(!text_block(whole, &diagram));
-        assert!(!text_block(whole, &diagram[..3]), "too few lines to call it text");
+    fn rough_boxes_hug_the_text_under_them() {
+        let l = |x: f64, y: f64| Line { text: "t".into(), x, y, w: 200.0, h: 20.0 };
+        let lines = vec![l(600.0, 200.0), l(600.0, 230.0), l(600.0, 260.0), l(50.0, 800.0)];
+        let mark = Mark { kind: "box".into(), x: 590.0, y: 190.0, w: 230.0, h: 100.0, label: String::new(), line: -1, to_line: -1, to: None };
+        let m = &sanitize(vec![mark], &lines)[0];
+        assert_eq!((m.x, m.y, m.w, m.h), (600.0, 200.0, 200.0, 80.0));
     }
 
     #[test]
