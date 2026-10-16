@@ -40,6 +40,13 @@ pub fn is_goodbye(text: &str) -> bool {
     w.len() <= 4 && (w.iter().any(|x| matches!(*x, "bye" | "goodbye" | "goodnight")) || t.contains("that's all") || t.contains("stop listening"))
 }
 
+/// "Mm.", "Yeah.", "Mm-hmm.": backchannel noise, never a request.
+pub fn is_filler(text: &str) -> bool {
+    let t = text.to_lowercase();
+    let w: Vec<&str> = t.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    w.len() <= 2 && w.iter().all(|x| matches!(*x, "mm" | "mhm" | "hmm" | "hm" | "uh" | "um" | "huh" | "yeah" | "ah" | "oh" | "mmm" | "hmmm" | "uh-huh" | "ok" | "okay" | "hmm-hmm"))
+}
+
 fn load_kws() -> Option<KeywordSpotter> {
     let mut c = KeywordSpotterConfig::default();
     let t = &mut c.model_config;
@@ -369,6 +376,12 @@ mod tests {
     use super::*;
 
     /// Needs the models from scripts/fetch-models.sh.
+    #[test]
+    fn filler_is_not_a_request() {
+        assert!(is_filler("Mm-hmm.") && is_filler("Yeah.") && is_filler("Mm."));
+        assert!(!is_filler("Yeah, explain that") && !is_filler("no") && !is_filler("yes"));
+    }
+
     #[test]
     fn transcribes_a_wav() {
         let wav = sherpa_onnx::Wave::read(&path(&format!("{PARAKEET}/test_wavs/0.wav"))).unwrap();

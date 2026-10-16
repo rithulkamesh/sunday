@@ -300,6 +300,14 @@ fn listen(hud: Hud) {
                                 eprintln!("[stt] ignored: not your voice");
                                 continue;
                             }
+                            if stt::is_filler(&t) {
+                                continue;
+                            }
+                            // While Sunday is thinking or talking, only a voice that clearly matches may cut in.
+                            if tts::busy() && !stt::is_goodbye(&t) && !sim.is_some_and(|v| v >= speaker::SAME + 0.10) {
+                                eprintln!("[stt] ignored: busy, and not clearly you");
+                                continue;
+                            }
                             if hud.woken() && stt::is_goodbye(&t) {
                                 let _ = reply.send(llm::Turn { text: String::new(), voice: false, end: true }); // keep what was learned
                                 tts::interrupt();
