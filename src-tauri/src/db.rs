@@ -44,6 +44,26 @@ fn next(interval: f64, ease: f64, streak: i64, v: Verdict) -> (f64, f64, i64) {
 }
 
 #[derive(Serialize)]
+pub struct Node {
+    pub name: String,
+    pub subject: String,
+    pub status: &'static str,
+    pub needs: Vec<String>,
+}
+#[derive(Serialize)]
+pub struct Doc {
+    pub id: i64,
+    pub title: String,
+    pub chunks: i64,
+}
+/// A passage of the user's notes, with where it came from.
+#[derive(Clone, Serialize)]
+pub struct Hit {
+    pub title: String,
+    pub n: i64,
+    pub text: String,
+}
+#[derive(Serialize)]
 pub struct Due {
     pub concept: String,
     pub overdue_days: i64,
@@ -72,6 +92,8 @@ pub struct State {
     pub weak: Vec<Weak>,
     pub recent: Vec<Recent>,
     pub pending: Option<String>,
+    /// Concepts known / in the syllabus.
+    pub coverage: (usize, usize),
 }
 
 pub struct Db(Mutex<Connection>);
@@ -92,9 +114,72 @@ impl Db {
                  answer TEXT, verdict TEXT, error_type TEXT, feedback TEXT);
              CREATE TABLE IF NOT EXISTS reviews(concept TEXT PRIMARY KEY, due INTEGER, interval_days REAL,
                  ease REAL, streak INTEGER);
-             CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT);",
+             CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT);
+             CREATE TABLE IF NOT EXISTS concepts(name TEXT PRIMARY KEY, subject TEXT, ord INTEGER);
+             CREATE TABLE IF NOT EXISTS prereqs(concept TEXT, requires TEXT, PRIMARY KEY(concept, requires));
+             CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, ts INTEGER, title TEXT, path TEXT, hash TEXT UNIQUE);
+             CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(text, doc UNINDEXED, n UNINDEXED);",
         )?;
-        Ok(Self(Mutex::new(c)))
+        let db = Self(Mutex::new(c));
+        db.seed(include_str!("../domains/gate.txt"));
+        Ok(db)
+    }
+
+    /// Loads a domain pack: "# Subject" headers, then "concept < prereq, prereq" lines. Safe to re-run.
+    pub fn seed(&self, pack: &str) {
+        let c = self.0.lock().unwrap();
+        let (mut subject, mut n) = (String::new(), 0);
+        for line in pack.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            if let Some(h) = line.strip_prefix('#') {
+                subject = h.trim().to_string();
+                continue;
+            }
+            let (name, needs) = line.split_once('<').unwrap_or((line, ""));
+            let name = name.trim().to_lowercase();
+            n += 1;
+            let _ = c.execute("INSERT OR REPLACE INTO concepts(name, subject, ord) VALUES (?,?,?)", params![name, subject, n]);
+            for r in needs.split(',').map(|r| r.trim().to_lowercase()).filter(|r| !r.is_empty()) {
+                let _ = c.execute("INSERT OR IGNORE INTO prereqs(concept, requires) VALUES (?,?)", params![name, r]);
+            }
+        }
+    }
+
+    /// The syllabus with the learner's status on each concept: new, learning, or known (two correct reviews in a row).
+    pub fn graph(&self) -> Vec<Node> {
+        let c = self.0.lock().unwrap();
+        let mut st = c
+            .prepare(
+                "SELECT c.name, c.subject, COALESCE(r.streak, -1), (SELECT group_concat(requires, '|') FROM prereqs WHERE concept = c.name)
+                 FROM concepts c LEFT JOIN reviews r ON r.concept = c.name ORDER BY c.ord",
+            )
+            .unwrap();
+        st.query_map([], |r| {
+            let streak: i64 = r.get(2)?;
+            let needs: Option<String> = r.get(3)?;
+            Ok(Node {
+                name: r.get(0)?,
+                subject: r.get(1)?,
+                status: if streak >= 2 { "known" } else if streak >= 0 { "learning" } else { "new" },
+                needs: needs.map(|n| n.split('|').map(String::from).collect()).unwrap_or_default(),
+            })
+        })
+        .unwrap()
+        .flatten()
+        .collect()
+    }
+
+    /// The next concept to learn: not started, with every prerequisite known (syllabus order).
+    pub fn frontier(&self) -> Option<String> {
+        let g = self.graph();
+        let known = |n: &str| g.iter().any(|x| x.name == n && x.status == "known");
+        g.iter().find(|n| n.status == "new" && n.needs.iter().all(|r| known(r))).map(|n| n.name.clone())
+    }
+
+    /// Prerequisites of `concept` the learner hasn't shown they know.
+    pub fn gaps(&self, concept: &str) -> Vec<String> {
+        let g = self.graph();
+        let Some(n) = g.iter().find(|n| n.name == concept) else { return vec![] };
+        n.needs.iter().filter(|r| !g.iter().any(|x| &x.name == *r && x.status == "known")).cloned().collect()
     }
 
     pub fn message(&self, role: &str, text: &str) {
@@ -167,6 +252,57 @@ impl Db {
         };
     }
 
+    /// Indexes a document unless the same content is already there. Returns the chunk count, or None if a duplicate.
+    pub fn add_document(&self, title: &str, path: &str, hash: &str, chunks: &[String]) -> Option<usize> {
+        let c = self.0.lock().unwrap();
+        c.execute("INSERT INTO documents(ts, title, path, hash) VALUES (?,?,?,?)", params![now(), title, path, hash]).ok()?;
+        let id = c.last_insert_rowid();
+        for (n, t) in chunks.iter().enumerate() {
+            let _ = c.execute("INSERT INTO chunks(text, doc, n) VALUES (?,?,?)", params![t, id, n as i64 + 1]);
+        }
+        Some(chunks.len())
+    }
+
+    pub fn docs(&self) -> Vec<Doc> {
+        let c = self.0.lock().unwrap();
+        let mut st = c
+            .prepare("SELECT d.id, d.title, (SELECT COUNT(*) FROM chunks WHERE doc = d.id) FROM documents d ORDER BY d.id DESC")
+            .unwrap();
+        st.query_map([], |r| Ok(Doc { id: r.get(0)?, title: r.get(1)?, chunks: r.get(2)? })).unwrap().flatten().collect()
+    }
+
+    pub fn remove_document(&self, id: i64) {
+        let c = self.0.lock().unwrap();
+        let _ = c.execute("DELETE FROM chunks WHERE doc = ?", [id]);
+        let _ = c.execute("DELETE FROM documents WHERE id = ?", [id]);
+    }
+
+    /// Best passages for a question: BM25 candidates, kept only if they contain at least half
+    /// of the query terms, so a stray common word never counts as a source.
+    pub fn search(&self, q: &str, k: usize) -> Vec<Hit> {
+        let terms = crate::notes::terms(q);
+        if terms.is_empty() {
+            return vec![];
+        }
+        let c = self.0.lock().unwrap();
+        let mut st = c
+            .prepare(
+                "SELECT d.title, ch.n, ch.text FROM chunks ch JOIN documents d ON d.id = ch.doc
+                 WHERE chunks MATCH ? ORDER BY bm25(chunks) LIMIT 20",
+            )
+            .unwrap();
+        let need = terms.len().div_ceil(2);
+        st.query_map([crate::notes::fts_query(&terms)], |r| Ok(Hit { title: r.get(0)?, n: r.get(1)?, text: r.get(2)? }))
+            .unwrap()
+            .flatten()
+            .filter(|h| {
+                let t = h.text.to_lowercase();
+                terms.iter().filter(|w| t.contains(w.as_str())).count() >= need
+            })
+            .take(k)
+            .collect()
+    }
+
     pub fn state(&self) -> State {
         let (total, correct) = {
             let c = self.0.lock().unwrap();
@@ -178,7 +314,9 @@ impl Db {
             let mut st = c.prepare("SELECT concept, verdict, ts FROM attempts ORDER BY id DESC LIMIT 8").unwrap();
             st.query_map([], |r| Ok(Recent { concept: r.get(0)?, verdict: r.get(1)?, ts: r.get(2)? })).unwrap().flatten().collect()
         };
-        State { due: self.due(), total, correct, weak: self.weak(), recent, pending: self.pending().map(|p| p.question) }
+        let g = self.graph();
+        let coverage = (g.iter().filter(|n| n.status == "known").count(), g.len());
+        State { due: self.due(), total, correct, weak: self.weak(), recent, pending: self.pending().map(|p| p.question), coverage }
     }
 }
 
@@ -218,6 +356,46 @@ mod tests {
         assert_eq!((s.total, s.correct), (2, 1));
         assert_eq!(s.weak[0].concept, "graphs");
         assert_eq!(db.recent_questions("graphs", 5), vec!["What is graphs?"]);
+    }
+
+    #[test]
+    fn graph_frontier_and_gaps() {
+        let db = Db::init(Connection::open_in_memory().unwrap()).unwrap();
+        let g = db.graph();
+        assert!(g.len() > 80, "syllabus seeded: {}", g.len());
+        assert_eq!(db.frontier().as_deref(), Some("propositional logic")); // first concept with no prerequisites
+        assert_eq!(db.gaps("predicate logic"), vec!["propositional logic"]);
+        // Two correct answers in a row make a concept "known", which unlocks what depends on it.
+        let a = p("propositional logic");
+        db.attempt(&a, "x", Verdict::Correct, "none", "");
+        db.attempt(&a, "x", Verdict::Correct, "none", "");
+        assert!(db.gaps("predicate logic").is_empty());
+        assert_ne!(db.frontier().as_deref(), Some("propositional logic"));
+        assert_eq!(db.state().coverage.0, 1);
+        let db2 = Db::init(Connection::open_in_memory().unwrap()).unwrap();
+        db2.seed("# T\na\nb < a\n");
+        assert_eq!(db2.graph().iter().filter(|n| n.subject == "T").count(), 2);
+    }
+
+    #[test]
+    fn notes_are_searchable_with_sources() {
+        let db = Db::init(Connection::open_in_memory().unwrap()).unwrap();
+        let os = vec!["A deadlock needs mutual exclusion, hold and wait, no preemption and circular wait.".to_string()];
+        let net = vec!["TCP uses slow start and congestion avoidance to adapt its window.".to_string()];
+        assert_eq!(db.add_document("os notes", "/x/os.md", "h1", &os), Some(1));
+        assert_eq!(db.add_document("os notes again", "/x/os2.md", "h1", &os), None); // same content: skipped
+        db.add_document("networks", "/x/net.md", "h2", &net);
+        let hits = db.search("what are the conditions for deadlock?", 3);
+        assert_eq!((hits.len(), hits[0].title.as_str(), hits[0].n), (1, "os notes", 1));
+        assert!(db.search("explain quicksort pivots", 3).is_empty());
+        assert!(db.search("the and for", 3).is_empty());
+        assert_eq!(db.docs().len(), 2);
+        db.remove_document(hits_doc_id(&db, "networks"));
+        assert!(db.search("tcp congestion window", 3).is_empty());
+    }
+
+    fn hits_doc_id(db: &Db, title: &str) -> i64 {
+        db.docs().iter().find(|d| d.title == title).unwrap().id
     }
 
     #[test]

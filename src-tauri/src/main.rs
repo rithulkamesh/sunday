@@ -8,6 +8,8 @@ mod db;
 #[cfg(feature = "voice")]
 mod llm;
 #[cfg(feature = "voice")]
+mod notes;
+#[cfg(feature = "voice")]
 mod models;
 #[cfg(feature = "voice")]
 mod study;
@@ -258,6 +260,44 @@ fn study_state(db: tauri::State<Arc<db::Db>>) -> db::State {
     db.state()
 }
 
+/// One status line per file: what was indexed, or why not.
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn import_notes(paths: Vec<String>, db: tauri::State<Arc<db::Db>>) -> Vec<String> {
+    paths
+        .iter()
+        .map(|p| {
+            let path = std::path::Path::new(p);
+            let name = path.file_name().map_or_else(|| p.clone(), |n| n.to_string_lossy().into_owned());
+            match notes::extract(path) {
+                Err(e) => format!("{name}: {e}"),
+                Ok((title, text)) => match db.add_document(&title, p, &notes::hash(&text), &notes::chunk(&text)) {
+                    Some(n) => format!("{name}: indexed {n} passages"),
+                    None => format!("{name}: already imported"),
+                },
+            }
+        })
+        .collect()
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn notes(db: tauri::State<Arc<db::Db>>) -> Vec<db::Doc> {
+    db.docs()
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn remove_note(id: i64, db: tauri::State<Arc<db::Db>>) {
+    db.remove_document(id);
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn graph(db: tauri::State<Arc<db::Db>>) -> Vec<db::Node> {
+    db.graph()
+}
+
 #[cfg(feature = "voice")]
 #[tauri::command]
 fn history(limit: i64, db: tauri::State<Arc<db::Db>>) -> Vec<db::Msg> {
@@ -291,6 +331,7 @@ fn main() {
     tauri::Builder::default()
         // Must be first: a second launch just surfaces the first.
         .plugin(tauri_plugin_single_instance::init(|app, _, _| open_main(app)))
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             #[cfg(feature = "voice")]
             speak,
@@ -300,6 +341,14 @@ fn main() {
             ask,
             #[cfg(feature = "voice")]
             study_state,
+            #[cfg(feature = "voice")]
+            graph,
+            #[cfg(feature = "voice")]
+            import_notes,
+            #[cfg(feature = "voice")]
+            notes,
+            #[cfg(feature = "voice")]
+            remove_note,
             #[cfg(feature = "voice")]
             history
         ])
