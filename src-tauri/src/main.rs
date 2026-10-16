@@ -186,7 +186,7 @@ fn listen(hud: Hud) {
                     // Talking over Sunday: mic well above the learned echo of our own playback.
                     let ms = chunk.len() as f32 / 16.0;
                     mic_level += 0.5 * (rms - mic_level);
-                    if barge.over(mic_level, tts::playback_level(), ms) {
+                    if barge.over(mic_level, tts::playback_level(), ms, s.voiced()) {
                         eprintln!("[stt] barge-in (voice) echo ratio {:.2}", barge.ratio());
                         tts::interrupt();
                         hud.wake();

@@ -71,6 +71,9 @@ fn decode(recognizer: &OfflineRecognizer, samples: &[f32]) -> String {
 
 pub struct Stt {
     vad: VoiceActivityDetector,
+    voice_vad: VoiceActivityDetector,
+    muted_rest: Vec<f32>, // samples not yet a full VAD window
+    was_muted: bool,
     kws: KeywordSpotter,
     kws_stream: OnlineStream,
     /// Loaded on demand (hundreds of MB), dropped after IDLE.
@@ -90,18 +93,26 @@ impl Stt {
             eprintln!("models missing: run scripts/fetch-models.sh");
             return None;
         }
-        let mut vad = VadModelConfig::default();
-        vad.silero_vad.model = Some(path("silero_vad.onnx"));
-        vad.silero_vad.threshold = 0.5;
-        vad.silero_vad.min_silence_duration = 0.4;
-        vad.silero_vad.min_speech_duration = 0.2;
-        vad.silero_vad.max_speech_duration = 20.0;
-        vad.silero_vad.window_size = WINDOW as i32;
-        vad.sample_rate = 16_000;
+        let vad_cfg = |min_silence: f32, min_speech: f32| {
+            let mut vad = VadModelConfig::default();
+            vad.silero_vad.model = Some(path("silero_vad.onnx"));
+            vad.silero_vad.threshold = 0.5;
+            vad.silero_vad.min_silence_duration = min_silence;
+            vad.silero_vad.min_speech_duration = min_speech;
+            vad.silero_vad.max_speech_duration = 20.0;
+            vad.silero_vad.window_size = WINDOW as i32;
+            vad.sample_rate = 16_000;
+            vad
+        };
+        let vad = vad_cfg(0.4, 0.2);
 
         let kws = load_kws()?;
         Some(Self {
             vad: VoiceActivityDetector::create(&vad, 60.0)?,
+            // Quicker to react; only used while muted, to tell voices from claps.
+            voice_vad: VoiceActivityDetector::create(&vad_cfg(0.2, 0.1), 5.0)?,
+            muted_rest: Vec::new(),
+            was_muted: false,
             kws_stream: kws.create_stream(),
             kws,
             recognizer: None,
@@ -111,6 +122,11 @@ impl Stt {
             speaking: false,
             since_interim: 0,
         })
+    }
+
+    /// While muted: does the mic currently sound like speech (rather than a clap or a thump)?
+    pub fn voiced(&self) -> bool {
+        self.was_muted && self.voice_vad.detected()
     }
 
     /// Conversation over: drop the big model now instead of waiting out IDLE.
@@ -146,7 +162,23 @@ impl Stt {
             }
         }
         if muted {
+            // Keep a second VAD on the mic so barge-in can tell speech from a clap.
+            self.was_muted = true;
+            self.muted_rest.extend_from_slice(chunk);
+            let n = self.muted_rest.len() / WINDOW * WINDOW;
+            for w in self.muted_rest[..n].chunks(WINDOW) {
+                self.voice_vad.accept_waveform(w);
+            }
+            self.muted_rest.drain(..n);
+            while !self.voice_vad.is_empty() {
+                self.voice_vad.pop();
+            }
             return out;
+        }
+        if self.was_muted {
+            self.was_muted = false;
+            self.voice_vad.reset();
+            self.muted_rest.clear();
         }
         self.buf.extend_from_slice(chunk);
         self.since_interim += chunk.len();

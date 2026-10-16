@@ -21,8 +21,9 @@ impl BargeIn {
         *self = Self::default();
     }
 
-    /// `mic` and `play` are smoothed RMS levels over a chunk of `ms`.
-    pub fn over(&mut self, mic: f32, play: f32, ms: f32) -> bool {
+    /// `mic` and `play` are smoothed RMS levels over a chunk of `ms`; `voiced` is the VAD's
+    /// verdict on the mic (a clap is loud but not voiced).
+    pub fn over(&mut self, mic: f32, play: f32, ms: f32, voiced: bool) -> bool {
         self.age_ms += ms;
         if play < FLOOR {
             self.hot_ms = 0.0;
@@ -36,11 +37,13 @@ impl BargeIn {
             self.ratio += 0.2 * (r - self.ratio);
             return false;
         }
-        if r > self.ratio * FACTOR && mic > MIN_MIC {
+        if r > self.ratio * FACTOR && mic > MIN_MIC && voiced {
             self.hot_ms += ms;
         } else {
             self.hot_ms = 0.0;
-            self.ratio += 0.05 * (r - self.ratio); // only learn from echo, never from the user
+            if !voiced || r <= self.ratio * FACTOR {
+                self.ratio += 0.05 * (r - self.ratio); // only learn from echo, never from the user
+            }
         }
         self.hot_ms >= HOLD_MS
     }
@@ -62,11 +65,22 @@ mod tests {
         for i in 0..40 {
             let play = 0.2 + 0.1 * ((i as f32) * 1.3).sin();
             let voice = if i >= 20 { 0.15 } else { 0.0 };
-            if b.over(0.25 * play + voice, play, 100.0) && fired_at.is_none() {
+            if b.over(0.25 * play + voice, play, 100.0, true) && fired_at.is_none() {
                 fired_at = Some(i);
             }
         }
         let i = fired_at.expect("never fired");
         assert!((20..=24).contains(&i), "fired at chunk {i}"); // within ~0.5 s of the user starting
+    }
+
+    #[test]
+    fn ignores_claps() {
+        let mut b = BargeIn::default();
+        for i in 0..40 {
+            let play = 0.2;
+            // Loud for 300 ms from 2 s on, but the VAD says it isn't voice.
+            let clap = if (20..23).contains(&i) { 0.5 } else { 0.0 };
+            assert!(!b.over(0.05 + clap, play, 100.0, false), "fired at {i}");
+        }
     }
 }
