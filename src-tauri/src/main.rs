@@ -3,6 +3,8 @@
 
 mod mic;
 #[cfg(feature = "voice")]
+mod llm;
+#[cfg(feature = "voice")]
 mod models;
 #[cfg(feature = "voice")]
 mod stt;
@@ -134,7 +136,7 @@ fn watch_fn(hud: Hud) {
 
 /// What a piece of speech means for the HUD: the wake word shows it, later speech is shown.
 /// Emits "transcript" (live, for the HUD) and, for finished utterances, "utterance" (the log).
-fn on_speech(hud: &Hud, text: &str, is_final: bool) {
+fn on_speech(hud: &Hud, text: &str, is_final: bool) -> Option<String> {
     let lower = text.to_lowercase();
     let shown = if let Some(i) = lower.find(WAKE) {
         if !hud.woken() {
@@ -144,13 +146,15 @@ fn on_speech(hud: &Hud, text: &str, is_final: bool) {
     } else if hud.woken() || fn_down() {
         text
     } else {
-        return;
+        return None;
     };
     hud.touch();
     let _ = hud.app.emit("transcript", shown);
     if is_final && !shown.is_empty() {
         let _ = hud.app.emit("utterance", shown);
+        return Some(shown.to_string());
     }
+    None
 }
 
 fn listen(hud: Hud) {
@@ -159,16 +163,24 @@ fn listen(hud: Hud) {
         let Ok((_stream, rx)) = mic::open() else { return eprintln!("mic unavailable") };
         #[cfg(feature = "voice")]
         let mut stt = stt::Stt::new();
+        #[cfg(feature = "voice")]
+        let reply = llm::spawn(hud.clone(), app.state::<Tts>().0.lock().unwrap().clone());
         for chunk in rx {
             let rms = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len().max(1) as f32).sqrt();
             let _ = app.emit("level", rms * 8.0);
             #[cfg(feature = "voice")]
+            if tts::speaking() {
+                continue; // don't transcribe our own voice
+            }
+            #[cfg(feature = "voice")]
             for heard in stt.as_mut().map(|s| s.push(&chunk)).unwrap_or_default() {
                 match heard {
-                    stt::Heard::Interim(t) => on_speech(&hud, &t, false),
+                    stt::Heard::Interim(t) => drop(on_speech(&hud, &t, false)),
                     stt::Heard::Final(t) => {
                         eprintln!("[stt] {t:?}");
-                        on_speech(&hud, &t, true);
+                        if let Some(q) = on_speech(&hud, &t, true) {
+                            let _ = reply.send(q);
+                        }
                     }
                 }
             }

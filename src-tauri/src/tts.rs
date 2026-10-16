@@ -6,6 +6,16 @@ use sherpa_onnx::{
     OfflineTtsModelConfig,
 };
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// When queued audio finishes playing.
+static UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
+const TAIL: Duration = Duration::from_millis(400); // room echo
+
+/// True while Sunday is audible, so the mic can ignore itself.
+pub fn speaking() -> bool {
+    UNTIL.lock().unwrap().is_some_and(|t| Instant::now() < t + TAIL)
+}
 
 pub struct Speaker {
     tts: OfflineTts,
@@ -59,6 +69,9 @@ impl Speaker {
         let cfg = GenerationConfig { sid: 0, speed: 1.0, ..Default::default() };
         let none: Option<fn(&[f32], f32) -> bool> = None;
         if let Some(audio) = self.tts.generate_with_config(text, &cfg, none) {
+            let secs = audio.samples().len() as f64 / self.tts.sample_rate() as f64;
+            let mut until = UNTIL.lock().unwrap();
+            *until = Some(until.filter(|t| *t > Instant::now()).unwrap_or_else(Instant::now) + Duration::from_secs_f64(secs));
             self.queue.lock().unwrap().extend(audio.samples());
         }
     }
@@ -66,6 +79,7 @@ impl Speaker {
     /// Cut playback immediately (user interruption).
     pub fn stop(&self) {
         self.queue.lock().unwrap().clear();
+        *UNTIL.lock().unwrap() = None;
     }
 }
 
