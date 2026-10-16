@@ -1,0 +1,10 @@
+{
+  "identifier": "default",
+  "windows": [
+    "hud",
+    "main"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

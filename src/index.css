@@ -1,0 +1,29 @@
+@import "tailwindcss";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+
+/* Design tokens — same visual language as polylogue/chorale:
+   near-black canvas, white ink, one neutral accent, IBM Plex. */
+@theme {
+  --color-canvas: #0a0a0a;
+  --color-panel: #121316;
+  --color-raised: #1b1d21;
+  --color-line: #26282d;
+  --color-track: #2a2f36;
+  --color-ink: #ffffff;
+  --color-dim: #8a9096;
+  --color-accent: #a6afb8;
+
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --animate-word: word 260ms ease-out backwards;
+  @keyframes word {
+    from { opacity: 0; transform: translateY(6px); filter: blur(3px); }
+    to { opacity: 1; transform: none; filter: blur(0); }
+  }
+}
+
+html, body, #root { height: 100%; background: transparent; }
+body { @apply font-sans text-ink antialiased select-none overflow-hidden; }

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Run cargo through headstart's patched rustc/cargo (early-metadata builds).
+# Usage: scripts/hs check|build ...   (build it first: ~/dev/headstart/scripts/setup.sh)
+HS="${HEADSTART:-$HOME/dev/headstart}"
+export RUSTC="$HS/rustc/build/host/stage1/bin/rustc"
+export CARGO_UNSTABLE_HEADSTART=true
+exec "$HS/cargo/target/release/cargo" "$@" --manifest-path "$(dirname "$0")/../src-tauri/Cargo.toml"

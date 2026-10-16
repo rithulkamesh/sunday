@@ -1,0 +1,56 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Sunday",
+  "version": "0.1.0",
+  "identifier": "dev.rithul.sunday",
+  "build": {
+    "beforeDevCommand": "pnpm web",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm exec vite build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "hud",
+        "title": "Sunday",
+        "width": 680,
+        "height": 200,
+        "center": true,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "resizable": false,
+        "focus": false
+      },
+      {
+        "label": "main",
+        "title": "Sunday",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 720,
+        "minHeight": 480,
+        "center": true,
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "app",
+    "icon": [
+      "icons/icon.png"
+    ],
+    "macOS": {
+      "infoPlist": "Info.plist"
+    }
+  }
+}

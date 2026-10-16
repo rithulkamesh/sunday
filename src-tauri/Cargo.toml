@@ -1,0 +1,21 @@
+[package]
+name = "sunday"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
+cpal = "0.15"
+tauri-plugin-single-instance = "2"
+sherpa-onnx = { version = "1.13.8", default-features = false, features = ["static"], optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5"
+
+[features]
+default = ["voice"]
+# Wake word, live transcription and TTS (sherpa-onnx). Models: scripts/fetch-models.sh
+voice = ["dep:sherpa-onnx"]
