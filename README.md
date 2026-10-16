@@ -70,3 +70,7 @@ The plain `qwen3-vl:4b` is a thinking model and roughly twice as slow; Sunday ca
 
 Held-out evaluation and delayed-retention tests (grading is LLM-as-judge, with no answer keys), a router model (Laya or otherwise),
 a tool gateway and approvals, taking actions on your computer, sync, the floating-orb polish.
+
+## License
+
+GPL-3.0-or-later. Forks and derivatives must stay open source under the same license. See [LICENSE](LICENSE).
