@@ -5,13 +5,20 @@ use sherpa_onnx::{
     GenerationConfig, OfflineTts, OfflineTtsConfig, OfflineTtsKokoroModelConfig,
     OfflineTtsModelConfig,
 };
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Samples waiting for the output device. Global so `interrupt` can silence playback at once.
 static QUEUE: Mutex<std::collections::VecDeque<f32>> = Mutex::new(std::collections::VecDeque::new());
 /// Bumped by `interrupt`; speech stamped with an older value is dropped.
+/// Smoothed RMS of what we're playing, as f32 bits; the barge-in detector's echo reference.
+static PLAY_LEVEL: AtomicU32 = AtomicU32::new(0);
+
+pub fn playback_level() -> f32 {
+    f32::from_bits(PLAY_LEVEL.load(Ordering::Relaxed))
+}
+
 static EPOCH: AtomicU64 = AtomicU64::new(0);
 
 pub fn epoch() -> u64 {
@@ -72,6 +79,9 @@ impl Speaker {
                 move |out: &mut [f32], _| {
                     let mut q = QUEUE.lock().unwrap();
                     out.iter_mut().for_each(|s| *s = q.pop_front().unwrap_or(0.0));
+                    let rms = (out.iter().map(|s| s * s).sum::<f32>() / out.len().max(1) as f32).sqrt();
+                    let prev = playback_level();
+                    PLAY_LEVEL.store((prev + 0.1 * (rms - prev)).to_bits(), Ordering::Relaxed);
                 },
                 |e| eprintln!("tts output error: {e}"),
                 None,

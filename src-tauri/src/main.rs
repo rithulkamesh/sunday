@@ -1,6 +1,7 @@
 //! Sunday: hold fn or say "sunday" -> HUD pill at the bottom of the screen.
 //! A normal dock app: closing the main window hides it, only Quit (dock/tray/cmd+q) exits.
 
+mod bargein;
 mod mic;
 #[cfg(feature = "voice")]
 mod llm;
@@ -167,6 +168,8 @@ fn listen(hud: Hud) {
         #[cfg(feature = "voice")]
         let mut stt = stt::Stt::new();
         #[cfg(feature = "voice")]
+        let (mut barge, mut mic_level) = (bargein::BargeIn::default(), 0.0f32);
+        #[cfg(feature = "voice")]
         let reply = llm::spawn(hud.clone(), app.state::<Tts>().0.lock().unwrap().clone());
         for chunk in rx {
             let rms = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len().max(1) as f32).sqrt();
@@ -178,6 +181,19 @@ fn listen(hud: Hud) {
                 if muted && fn_held {
                     tts::interrupt(); // holding fn barges in
                     muted = false;
+                }
+                if muted {
+                    // Talking over Sunday: mic well above the learned echo of our own playback.
+                    let ms = chunk.len() as f32 / 16.0;
+                    mic_level += 0.5 * (rms - mic_level);
+                    if barge.over(mic_level, tts::playback_level(), ms) {
+                        eprintln!("[stt] barge-in (voice) echo ratio {:.2}", barge.ratio());
+                        tts::interrupt();
+                        hud.wake();
+                        muted = false;
+                    }
+                } else {
+                    barge.reset();
                 }
                 if fn_held || muted {
                     s.warm(); // hold-to-talk, or mid-conversation: keep the model loaded
