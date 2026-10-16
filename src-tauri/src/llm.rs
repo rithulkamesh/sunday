@@ -20,9 +20,10 @@ pub fn spawn(hud: Hud, speak: Sender<Cmd>) -> Sender<String> {
         let mut history = vec![json!({"role": "system", "content": SYSTEM})];
         for q in rx {
             history.push(json!({"role": "user", "content": q}));
+            let ep = tts::epoch();
             let _ = hud.app.emit("state", "thinking");
             let _ = speak.send(Cmd::Chime);
-            let reply = chat(&hud, &speak, &model, &history).unwrap_or_else(|e| {
+            let reply = chat(&hud, &speak, &model, &history, ep).unwrap_or_else(|e| {
                 eprintln!("[llm] {e}");
                 String::new()
             });
@@ -44,7 +45,8 @@ pub fn spawn(hud: Hud, speak: Sender<Cmd>) -> Sender<String> {
     tx
 }
 
-fn chat(hud: &Hud, speak: &Sender<Cmd>, model: &str, history: &[Value]) -> Result<String, Box<dyn std::error::Error>> {
+/// Empty if it failed or was interrupted (`tts::interrupt` bumps the epoch).
+fn chat(hud: &Hud, speak: &Sender<Cmd>, model: &str, history: &[Value], ep: u64) -> Result<String, Box<dyn std::error::Error>> {
     // think:false is ~5x faster to first word on reasoning models; keep_alive avoids reloading weights.
     let body = json!({"model": model, "messages": history, "stream": true, "think": false, "keep_alive": "30m"});
     let resp = ureq::post(URL).send_json(body)?;
@@ -52,17 +54,23 @@ fn chat(hud: &Hud, speak: &Sender<Cmd>, model: &str, history: &[Value]) -> Resul
     let mut first = true; // the first chunk is cut at a comma so audio starts sooner
     for line in BufReader::new(resp.into_reader()).lines() {
         let v: Value = serde_json::from_str(&line?)?;
+        if tts::epoch() != ep {
+            return Ok(String::new()); // dropping the response closes the connection; Ollama stops
+        }
         let Some(tok) = v["message"]["content"].as_str().filter(|t| !t.is_empty()) else { continue };
         full.push_str(tok);
         pending.push_str(tok);
         hud.touch();
         while let Some(s) = take_sentence(&mut pending, first) {
             first = false;
-            let _ = speak.send(Cmd::Speak(s));
+            let _ = speak.send(Cmd::Speak(s, ep));
         }
     }
+    if tts::epoch() != ep {
+        return Ok(String::new());
+    }
     if !pending.trim().is_empty() {
-        let _ = speak.send(Cmd::Speak(pending));
+        let _ = speak.send(Cmd::Speak(pending, ep));
     }
     Ok(full.trim().to_string())
 }

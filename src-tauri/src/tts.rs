@@ -5,8 +5,25 @@ use sherpa_onnx::{
     GenerationConfig, OfflineTts, OfflineTtsConfig, OfflineTtsKokoroModelConfig,
     OfflineTtsModelConfig,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+/// Samples waiting for the output device. Global so `interrupt` can silence playback at once.
+static QUEUE: Mutex<std::collections::VecDeque<f32>> = Mutex::new(std::collections::VecDeque::new());
+/// Bumped by `interrupt`; speech stamped with an older value is dropped.
+static EPOCH: AtomicU64 = AtomicU64::new(0);
+
+pub fn epoch() -> u64 {
+    EPOCH.load(Ordering::SeqCst)
+}
+
+/// Barge-in: silence playback now and cancel everything stamped before this call.
+pub fn interrupt() {
+    EPOCH.fetch_add(1, Ordering::SeqCst);
+    QUEUE.lock().unwrap().clear();
+    *UNTIL.lock().unwrap() = None;
+}
 
 /// When queued audio finishes playing.
 static UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
@@ -20,7 +37,6 @@ pub fn speaking() -> bool {
 pub struct Speaker {
     tts: OfflineTts,
     _stream: cpal::Stream,
-    queue: Arc<Mutex<std::collections::VecDeque<f32>>>,
 }
 
 impl Speaker {
@@ -50,13 +66,11 @@ impl Speaker {
         let mut cfg = dev.default_output_config().ok()?.config();
         cfg.sample_rate = cpal::SampleRate(rate);
         cfg.channels = 1;
-        let queue: Arc<Mutex<std::collections::VecDeque<f32>>> = Arc::default();
-        let q = queue.clone();
         let stream = dev
             .build_output_stream(
                 &cfg,
                 move |out: &mut [f32], _| {
-                    let mut q = q.lock().unwrap();
+                    let mut q = QUEUE.lock().unwrap();
                     out.iter_mut().for_each(|s| *s = q.pop_front().unwrap_or(0.0));
                 },
                 |e| eprintln!("tts output error: {e}"),
@@ -64,23 +78,31 @@ impl Speaker {
             )
             .ok()?;
         stream.play().ok()?;
-        Some(Self { tts, _stream: stream, queue })
+        Some(Self { tts, _stream: stream })
     }
 
-    /// Generates then queues the audio. Blocks for the synthesis time (RTF is well under 1).
-    pub fn speak(&self, text: &str) {
+    /// Synthesizes at the model's sample rate. Blocks for the synthesis time (RTF is well under 1).
+    pub fn synth(&self, text: &str) -> Vec<f32> {
         let cfg = GenerationConfig { sid: 0, speed: 1.0, ..Default::default() };
         let none: Option<fn(&[f32], f32) -> bool> = None;
-        if let Some(audio) = self.tts.generate_with_config(text, &cfg, none) {
-            self.enqueue(audio.samples());
+        self.tts.generate_with_config(text, &cfg, none).map(|a| a.samples().to_vec()).unwrap_or_default()
+    }
+
+    /// Queues the audio unless an interrupt happened since `epoch`. False if dropped.
+    pub fn speak(&self, text: &str, epoch: u64) -> bool {
+        let audio = self.synth(text);
+        if epoch != self::epoch() {
+            return false;
         }
+        self.enqueue(&audio);
+        true
     }
 
     fn enqueue(&self, samples: &[f32]) {
         let secs = samples.len() as f64 / self.tts.sample_rate() as f64;
         let mut until = UNTIL.lock().unwrap();
         *until = Some(until.filter(|t| *t > Instant::now()).unwrap_or_else(Instant::now) + Duration::from_secs_f64(secs));
-        self.queue.lock().unwrap().extend(samples);
+        QUEUE.lock().unwrap().extend(samples);
     }
 
     /// Two soft rising notes: "heard you, working on it".
@@ -95,18 +117,12 @@ impl Speaker {
         }
         self.enqueue(&out);
     }
-
-    /// Cut playback immediately (user interruption).
-    pub fn stop(&self) {
-        self.queue.lock().unwrap().clear();
-        *UNTIL.lock().unwrap() = None;
-    }
 }
 
 pub enum Cmd {
-    Speak(String),
+    /// Text, stamped with the `epoch()` it was requested under.
+    Speak(String, u64),
     Chime,
-    Stop,
 }
 
 /// cpal streams aren't Send, so the speaker lives on its own thread; talk to it by channel.
@@ -116,13 +132,13 @@ pub fn spawn(app: tauri::AppHandle) -> std::sync::mpsc::Sender<Cmd> {
         let Some(speaker) = Speaker::new() else { return eprintln!("tts unavailable") };
         for cmd in rx {
             match cmd {
-                Cmd::Speak(t) => {
-                    speaker.speak(&t);
+                Cmd::Speak(t, epoch) => {
                     // Words go on screen as their audio starts, not before.
-                    let _ = tauri::Emitter::emit(&app, "say", t.trim());
+                    if speaker.speak(&t, epoch) {
+                        let _ = tauri::Emitter::emit(&app, "say", t.trim());
+                    }
                 }
                 Cmd::Chime => speaker.chime(),
-                Cmd::Stop => speaker.stop(),
             }
         }
     });
@@ -139,7 +155,7 @@ mod tests {
         let s = Speaker::new().expect("tts unavailable");
         for text in ["Hello there.", "I can answer questions, write different kinds of creative text, and help you with information.", "Just let me know what you need."] {
             let t = Instant::now();
-            s.speak(text);
+            s.speak(text, epoch());
             let wait = UNTIL.lock().unwrap().unwrap().saturating_duration_since(Instant::now());
             println!("synth {:?} for {:?} of audio: {text}", t.elapsed(), wait);
         }

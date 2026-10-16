@@ -169,18 +169,34 @@ fn listen(hud: Hud) {
             let rms = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len().max(1) as f32).sqrt();
             let _ = app.emit("level", rms * 8.0);
             #[cfg(feature = "voice")]
-            if tts::speaking() {
-                stt.as_mut().map(|s| s.touch()); // mid-conversation: keep the model warm
-                continue; // don't transcribe our own voice
-            }
-            #[cfg(feature = "voice")]
-            for heard in stt.as_mut().map(|s| s.push(&chunk)).unwrap_or_default() {
-                match heard {
-                    stt::Heard::Interim(t) => drop(on_speech(&hud, &t, false)),
-                    stt::Heard::Final(t) => {
-                        eprintln!("[stt] {t:?}");
-                        if let Some(q) = on_speech(&hud, &t, true) {
-                            let _ = reply.send(q);
+            if let Some(s) = stt.as_mut() {
+                let fn_held = fn_down();
+                let mut muted = tts::speaking(); // our own voice: only the keyword spotter listens
+                if muted && fn_held {
+                    tts::interrupt(); // holding fn barges in
+                    muted = false;
+                }
+                if fn_held || muted {
+                    s.warm(); // hold-to-talk, or mid-conversation: keep the model loaded
+                }
+                for heard in s.push(&chunk, muted) {
+                    match heard {
+                        stt::Heard::Interim(t) => drop(on_speech(&hud, &t, false)),
+                        stt::Heard::Final(t) => {
+                            eprintln!("[stt] {t:?}");
+                            if let Some(q) = on_speech(&hud, &t, true) {
+                                tts::interrupt(); // a new question cancels a reply still in flight
+                                let _ = reply.send(q);
+                            }
+                        }
+                        stt::Heard::Keyword(k) => {
+                            eprintln!("[stt] keyword {k:?} muted={muted}");
+                            if muted {
+                                tts::interrupt();
+                            }
+                            if k == "sunday" {
+                                hud.wake(); // show the HUD now, before the model has loaded
+                            }
                         }
                     }
                 }
@@ -195,13 +211,13 @@ struct Tts(Mutex<std::sync::mpsc::Sender<tts::Cmd>>);
 #[cfg(feature = "voice")]
 #[tauri::command]
 fn speak(text: String, tts: tauri::State<Tts>) {
-    let _ = tts.0.lock().unwrap().send(tts::Cmd::Speak(text));
+    let _ = tts.0.lock().unwrap().send(tts::Cmd::Speak(text, tts::epoch()));
 }
 
 #[cfg(feature = "voice")]
 #[tauri::command]
-fn stop_speaking(tts: tauri::State<Tts>) {
-    let _ = tts.0.lock().unwrap().send(tts::Cmd::Stop);
+fn stop_speaking() {
+    tts::interrupt();
 }
 
 fn open_main(app: &AppHandle) {
