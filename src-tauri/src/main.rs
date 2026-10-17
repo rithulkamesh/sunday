@@ -8,6 +8,8 @@ mod mic;
 mod db;
 #[cfg(feature = "voice")]
 mod decision;
+#[cfg(all(test, feature = "voice"))]
+mod eval;
 #[cfg(feature = "voice")]
 mod screen;
 #[cfg(feature = "voice")]

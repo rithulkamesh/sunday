@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
-    "web": "vite"
+    "web": "vite",
+    "eval": "cd src-tauri && cargo test --bin sunday eval_suite -- --nocapture"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",
