@@ -5,11 +5,11 @@ use crate::db::{Db, Fact, Hit, Pending};
 use crate::decision::{self, Action, Decider};
 use crate::skills::Manifest;
 use crate::learn::{self, Grade, Quiz};
+use crate::provider::{self, Provider};
 use crate::tts::{self, Cmd};
 use crate::Hud;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader};
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
@@ -28,7 +28,6 @@ impl std::fmt::Display for UserMsg {
 }
 impl std::error::Error for UserMsg {}
 
-const URL: &str = "http://localhost:11434/api/chat";
 pub const MODEL: &str = "qwen3:4b-instruct"; // not plain qwen3:4b: that is thinking-only and leaks its reasoning into replies
 /// How long Ollama keeps each model in memory after use. The text and embedding models are used every turn, so they stay
 /// loaded (a cold load costs 1.5-3 s on the next reply); the larger vision model is kept for a while after a screen look.
@@ -44,13 +43,7 @@ pub fn model_name(db: &Db) -> String {
 
 /// Models Ollama has locally; empty if it isn't running.
 pub fn installed_models() -> Vec<String> {
-    ureq::get("http://localhost:11434/api/tags")
-        .timeout(std::time::Duration::from_secs(3))
-        .call()
-        .ok()
-        .and_then(|r| r.into_json::<Value>().ok())
-        .map(|v| v["models"].as_array().map(|a| a.iter().filter_map(|m| m["name"].as_str().map(String::from)).collect()).unwrap_or_default())
-        .unwrap_or_default()
+    provider::current().models()
 }
 
 pub fn vision_model(db: &Db) -> String {
@@ -92,9 +85,7 @@ struct Ctx<'a> {
 fn warm_up(model: String) {
     std::thread::spawn(move || {
         let t = std::time::Instant::now();
-        let _ = ureq::post("http://localhost:11434/api/generate")
-            .timeout(std::time::Duration::from_secs(120))
-            .send_json(json!({"model": model, "prompt": "", "keep_alive": KEEP_TEXT}));
+        provider::current().warm(&model);
         let _ = crate::memory::embed(&["warm up".to_string()], true);
         eprintln!("[perf] models warmed up in {:?}", t.elapsed());
     });
@@ -142,10 +133,8 @@ pub fn spawn(hud: Hud, speak: Sender<Cmd>, db: Arc<Db>) -> Sender<Turn> {
                     eprintln!("[llm] {e}");
                     let msg = if let Some(u) = e.downcast_ref::<UserMsg>() {
                         u.0.clone()
-                    } else if e.to_string().contains("404") {
-                        format!("The model {model} isn't installed. Run ollama pull {model}.")
                     } else {
-                        "Sorry, I couldn't reach the model. Is Ollama running?".into()
+                        "Sorry, I couldn't get an answer from the model.".into()
                     };
                     say(&c, &msg)
                 }
@@ -422,11 +411,13 @@ pub fn run_skill(db: &Db, model: &str, id: &str, version: Option<i64>, input: &s
 
 /// Structured output: the schema constrains the model, serde validates, one retry, then give up.
 pub fn json<T: DeserializeOwned>(model: &str, system: &str, user: &str, schema: Value, timeout_s: u64) -> Res<T> {
-    let body = json!({"model": model, "stream": false, "think": false, "keep_alive": KEEP_TEXT, "format": schema, "options": {"temperature": 0},
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]});
+    json_via(provider::current(), model, system, user, schema, timeout_s)
+}
+
+fn json_via<T: DeserializeOwned>(p: &dyn Provider, model: &str, system: &str, user: &str, schema: Value, timeout_s: u64) -> Res<T> {
+    let messages = [json!({"role": "system", "content": system}), json!({"role": "user", "content": user})];
     for _ in 0..2 {
-        let v: Value = ureq::post(URL).timeout(std::time::Duration::from_secs(timeout_s)).send_json(&body)?.into_json()?;
-        if let Ok(t) = serde_json::from_str(v["message"]["content"].as_str().unwrap_or("")) {
+        if let Ok(t) = serde_json::from_str(&p.complete(model, &messages, Some(schema.clone()), timeout_s)?) {
             return Ok(t);
         }
     }
@@ -537,19 +528,14 @@ fn build_messages(history: &[Value], ctx: &Context) -> (Vec<Value>, Vec<String>)
 fn chat(c: &Ctx, history: &[Value], ctx: &Context) -> Res<String> {
     let (messages, sources) = build_messages(history, ctx);
     c.sources.borrow_mut().extend(sources);
-    // think:false is ~5x faster to first word on reasoning models; keep_alive avoids reloading weights.
-    let body = json!({"model": c.model, "messages": messages, "stream": true, "think": false, "keep_alive": KEEP_TEXT});
     let t0 = std::time::Instant::now();
-    let resp = ureq::post(URL).send_json(body)?;
     let (mut full, mut pending) = (String::new(), String::new());
     let mut first = true; // the first chunk is cut at a comma so audio starts sooner
     let mut first_token = true;
-    for line in BufReader::new(resp.into_reader()).lines() {
-        let v: Value = serde_json::from_str(&line?)?;
+    provider::current().stream(c.model, &messages, &mut |tok| {
         if tts::epoch() != c.ep {
-            return Ok(String::new()); // dropping the response closes the connection; Ollama stops
+            return false;
         }
-        let Some(tok) = v["message"]["content"].as_str().filter(|t| !t.is_empty()) else { continue };
         if std::mem::take(&mut first_token) {
             eprintln!("[perf] model: first token after {:?}", t0.elapsed());
         }
@@ -564,7 +550,8 @@ fn chat(c: &Ctx, history: &[Value], ctx: &Context) -> Res<String> {
                 tts::say(c.speak, s, c.ep);
             }
         }
-    }
+        true
+    })?;
     if tts::epoch() != c.ep {
         return Ok(String::new());
     }
@@ -594,6 +581,7 @@ pub(crate) fn take_sentence(buf: &mut String, eager: bool) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufRead, BufReader};
 
     #[test]
     fn context_goes_just_before_the_question() {
@@ -608,6 +596,28 @@ mod tests {
         assert!(ctx_text.contains("[m1] (you told me) My driving test") && ctx_text.contains("may be wrong"), "{ctx_text}");
         assert_eq!(src, vec!["os notes", "what you told me", "an earlier conversation"]);
         assert_eq!(build_messages(&history, &Context::default()).0.len(), history.len());
+    }
+
+    /// Replays canned replies, so the retry logic runs without any backend.
+    struct Canned(std::sync::Mutex<Vec<&'static str>>);
+    impl Provider for Canned {
+        fn complete(&self, _: &str, _: &[Value], _: Option<Value>, _: u64) -> Res<String> {
+            Ok(self.0.lock().unwrap().remove(0).into())
+        }
+        fn stream(&self, _: &str, _: &[Value], _: &mut dyn FnMut(&str) -> bool) -> Res<()> {
+            Ok(())
+        }
+        fn models(&self) -> Vec<String> {
+            vec![]
+        }
+        fn warm(&self, _: &str) {}
+    }
+
+    #[test]
+    fn json_retries_once_then_gives_up() {
+        let ask = |replies: Vec<&'static str>| json_via::<Value>(&Canned(replies.into()), "m", "s", "u", json!({}), 1);
+        assert_eq!(ask(vec!["nope", r#"{"a":1}"#]).unwrap()["a"], 1);
+        assert!(ask(vec!["nope", "still nope"]).is_err());
     }
 
     #[test]
@@ -675,7 +685,7 @@ mod tests {
         let (messages, sources) = build_messages(&history, &Context { web: &web, ..Context::default() });
         let t1 = std::time::Instant::now();
         let model = std::env::var("SUNDAY_MODEL").unwrap_or_else(|_| MODEL.into());
-        let v: Value = ureq::post(URL).timeout(std::time::Duration::from_secs(120))
+        let v: Value = ureq::post(provider::OLLAMA_CHAT).timeout(std::time::Duration::from_secs(120))
             .send_json(json!({"model": model, "messages": messages, "stream": false, "think": false})).unwrap().into_json().unwrap();
         let answer = v["message"]["content"].as_str().unwrap_or("");
         println!("answer in {:?} (sources {sources:?}):\n{answer}", t1.elapsed());
@@ -719,7 +729,7 @@ mod tests {
         for round in ["first", "second"] {
             let body = json!({"model": model, "messages": history, "stream": true, "think": false, "keep_alive": "30m"});
             let t = std::time::Instant::now();
-            let resp = ureq::post(URL).send_json(body).unwrap();
+            let resp = ureq::post(provider::OLLAMA_CHAT).send_json(body).unwrap();
             let (mut first, mut sentence, mut text, mut tokens) = (None, None, String::new(), 0);
             for line in BufReader::new(resp.into_reader()).lines() {
                 let v: Value = serde_json::from_str(&line.unwrap()).unwrap();

@@ -3,3 +3,4 @@ dist
 .venv
 src-tauri/target
 src-tauri/gen
+evals/runs/
