@@ -15,6 +15,8 @@ mod skills;
 #[cfg(feature = "voice")]
 mod llm;
 #[cfg(feature = "voice")]
+mod provider;
+#[cfg(feature = "voice")]
 mod notes;
 #[cfg(feature = "voice")]
 mod memory;
