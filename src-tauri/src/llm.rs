@@ -601,6 +601,9 @@ mod tests {
     /// Replays canned replies, so the retry logic runs without any backend.
     struct Canned(std::sync::Mutex<Vec<&'static str>>);
     impl Provider for Canned {
+        fn name(&self) -> &'static str {
+            "canned"
+        }
         fn complete(&self, _: &str, _: &[Value], _: Option<Value>, _: u64) -> Res<String> {
             Ok(self.0.lock().unwrap().remove(0).into())
         }
