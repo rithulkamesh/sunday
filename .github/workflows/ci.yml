@@ -18,6 +18,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # A cache from before MLX can hold a stale link path to sherpa-onnx's prebuilt libraries (rust-cache prunes
+          # that directory), which fails the build. Bump this if it ever happens again.
+          prefix-key: v1-rust
       # Other tests need Ollama, so run the deterministic ones by name.
       - name: Tests (no model needed)
         working-directory: src-tauri
