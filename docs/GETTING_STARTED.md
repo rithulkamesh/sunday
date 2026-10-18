@@ -23,6 +23,19 @@ bun run tauri dev
 Use the `-instruct` builds. Plain `qwen3:4b` and `qwen3-vl:4b` are thinking builds and leak reasoning into replies.
 Override models with `SUNDAY_MODEL`, `SUNDAY_VISION`, `SUNDAY_EMBED`, or pick them in Settings / ⌘K.
 
+### Other model providers
+
+Ollama is the default and keeps everything on your machine. To use a hosted model for text and chat, set `SUNDAY_PROVIDER` and `SUNDAY_MODEL` before launching. **Your prompts, including any notes or memory pulled into them, are then sent to that provider.** Embeddings and the vision model still use Ollama.
+
+| `SUNDAY_PROVIDER` | Key | Notes |
+|---|---|---|
+| `openai` | `OPENAI_API_KEY` (optional for local servers) | `OPENAI_BASE_URL` for OpenRouter, vLLM, LM Studio, llama.cpp server |
+| `anthropic` | `ANTHROPIC_API_KEY` | e.g. `SUNDAY_MODEL=claude-sonnet-5-5` |
+| `gemini` | `GEMINI_API_KEY` | via Google's OpenAI-compatible endpoint |
+| `nova` | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key; `AWS_REGION` (default `us-east-1`); no token streaming yet |
+
+Check a provider end to end with `SUNDAY_PROVIDER_TEST=1 cargo test conformance::live` (spends tokens).
+
 ## Permissions (macOS)
 
 Grant these when prompted, or in System Settings → Privacy & Security:
