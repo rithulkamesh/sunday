@@ -118,17 +118,9 @@ fn get(url: &url::Url) -> Result<(String, String), String> {
     Err("too many redirects".into())
 }
 
-/// A Chromium-family browser to drive headlessly: Chrome first, then others.
+/// A Chromium-family browser to drive headlessly: SUNDAY_CHROME, else the first one the OS has.
 pub fn chrome_path() -> Option<std::path::PathBuf> {
-    const APPS: [&str; 6] = [
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/Applications/Chromium.app/Contents/MacOS/Chromium",
-        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-        "/Applications/Vivaldi.app/Contents/MacOS/Vivaldi",
-        "/usr/bin/chromium",
-    ];
-    std::env::var_os("SUNDAY_CHROME").map(std::path::PathBuf::from).filter(|p| p.exists()).or_else(|| APPS.iter().map(std::path::PathBuf::from).find(|p| p.exists()))
+    std::env::var_os("SUNDAY_CHROME").map(std::path::PathBuf::from).filter(|p| p.exists()).or_else(|| crate::platform::current().chrome_path())
 }
 
 /// The page's HTML after JavaScript has run. None if no browser is installed or anything fails or times out,
@@ -224,22 +216,9 @@ pub fn snippet(text: &str, q: &str, max: usize) -> String {
     joined.chars().take(max).collect()
 }
 
-/// The address of the page open in the front browser (macOS, via AppleScript: the first use asks for permission).
+/// The address of the page open in the front browser.
 pub fn browser_url(front_app: &str) -> Result<String, String> {
-    const CHROMIUM: [&str; 7] = ["Google Chrome", "Brave Browser", "Microsoft Edge", "Chromium", "Vivaldi", "Arc", "Dia"];
-    let script = match front_app {
-        "Safari" => r#"tell application "Safari" to get URL of front document"#.to_string(),
-        a if CHROMIUM.contains(&a) => format!(r#"tell application "{a}" to get URL of active tab of front window"#),
-        a if a.eq_ignore_ascii_case("sunday") => return Err("Switch to the browser tab first and ask by voice, or paste the link".into()),
-        a => return Err(format!("{a} isn't a browser I can read an address from")),
-    };
-    let out = std::process::Command::new("osascript").arg("-e").arg(&script).output().map_err(|e| e.to_string())?;
-    let url = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if out.status.success() && url.starts_with("http") {
-        Ok(url)
-    } else {
-        Err(format!("I couldn't read the address from {front_app}. Allow this app to control it in System Settings, Privacy and Security, Automation"))
-    }
+    crate::platform::current().browser_url(front_app)
 }
 
 /// A web search (DuckDuckGo's HTML page): result addresses and titles, best first.

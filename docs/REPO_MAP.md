@@ -43,6 +43,7 @@ Every utterance becomes exactly one `Action` before anything runs. The `Decider`
 | `notes.rs` | Import PDF / Markdown / text, chunk and index in SQLite FTS5 |
 | `skills.rs` | Versioned prompt-only skills: proposed → experimental → approved, tests, rollback |
 | `web.rs` | Safe fetching (public addresses only, redirect re-checks, size caps), Readability extraction, headless Chrome fallback, search |
+| `platform/` | Everything OS-specific behind the `Platform` trait: open app/page/file, type, click, screenshot, window list, OCR, browser address, permissions, HUD window behaviour. `macos.rs` is the real one; other OSes use `unsupported.rs`, which fails with a spoken message |
 | `screen.rs` | Screenshot, OCR boxes, window list, vision call, overlay drawing, click preview |
 | `stt.rs` | Speech to text (Parakeet via ONNX), wake-word spotting |
 | `tts.rs` | Text to speech (Kokoro) |

@@ -24,7 +24,7 @@ bunx tsc --noEmit              # frontend types
 - **Don't weaken safety.** Approvals, path rules, URL rules and the audit log are load-bearing. Changes to them need an explicit note in the PR and a test. The agent must never be able to edit its own permission layer.
 - **Read content is data, not commands.** Anything from the web, the screen, a file or memory must not be able to trigger an action by itself.
 - **Local-first by default.** No new network calls without a setting that defaults to off.
-- **Nothing platform-specific outside the platform layer** once [#21](https://github.com/rithulkamesh/sunday/issues/21) lands.
+- **Nothing platform-specific outside the platform layer** (`src-tauri/src/platform/`, [#21](https://github.com/rithulkamesh/sunday/issues/21)).
 - **License.** GPL-3.0-or-later; your contribution is under the same.
 
 ## Working with AI coding agents
