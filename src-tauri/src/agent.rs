@@ -169,36 +169,18 @@ fn describe(s: &Step) -> String {
     }
 }
 
-fn run_cmd(cmd: &str, args: &[&str]) -> Result<String, String> {
-    #[cfg(test)]
-    if sandbox::record(format!("{cmd} {}", args.join(" "))) {
-        return Ok("done".into());
-    }
-    let o = std::process::Command::new(cmd).args(args).output().map_err(|e| e.to_string())?;
-    if o.status.success() { Ok("done".into()) } else { Err(String::from_utf8_lossy(&o.stderr).trim().chars().take(200).collect()) }
-}
-
 /// Runs a step; the result goes back to the model as data.
 fn exec(db: &Db, s: &Step, eyes: &Eyes) -> Result<String, String> {
     check(s)?;
+    let os = crate::platform::current();
     match s.tool.as_str() {
-        "open_app" => run_cmd("open", &["-a", s.name.trim()]),
-        // In the browser the user already has open, not whichever one is the system default.
-        "open_url" => match browser_open() {
-            Some(b) => run_cmd("open", &["-a", &b, s.url.trim()]),
-            None => run_cmd("open", &[s.url.trim()]),
-        },
-        "open_path" => run_cmd("open", &[safe_path(&s.path)?.to_string_lossy().as_ref()]),
-        // The text travels as an argument, never inside the script, so it can't be executed as one.
-        "type_text" => run_cmd("osascript", &["-e", "on run argv\ntell application \"System Events\" to keystroke (item 1 of argv)\nend run", s.text.trim()])
-            .map_err(|e| format!("typing failed ({e}); Sunday may need Accessibility permission")),
+        "open_app" => os.open_app(s.name.trim()).map(|_| "done".into()),
+        "open_url" => os.open_url(s.url.trim(), browser_open().as_deref()).map(|_| "done".into()),
+        "open_path" => os.open_path(&safe_path(&s.path)?).map(|_| "done".into()),
+        "type_text" => os.type_text(s.text.trim()).map(|_| "done".into()),
         "click" => {
             let (x, y) = s.at.ok_or("I haven't found where to click")?;
-            #[cfg(test)]
-            if sandbox::record(format!("click {x:.0},{y:.0}")) {
-                return Ok("clicked".into());
-            }
-            crate::screen::click(x, y).map(|_| "clicked".to_string())
+            os.click(x, y).map(|_| "clicked".to_string())
         }
         "look_at_screen" => (eyes.look)(if s.query.trim().is_empty() { "what is on my screen" } else { s.query.trim() }),
         "recall" => Ok(crate::memory::recall(db, &s.query, 4).iter().map(|f| f.text.clone()).collect::<Vec<_>>().join("; ")),

@@ -104,7 +104,7 @@ struct Win {
     pid: i64,
 }
 #[derive(Deserialize)]
-struct Desk {
+pub struct Desk {
     display: Size,
     front: Front,
     windows: Vec<Win>,
@@ -121,6 +121,15 @@ struct Front {
 }
 
 impl Desk {
+    /// The main display's size in pixels.
+    pub fn display_size(&self) -> (f64, f64) {
+        (self.display.w, self.display.h)
+    }
+
+    pub fn front_app(&self) -> String {
+        self.front.app.clone()
+    }
+
     /// The frontmost app's top window, as a region of the display.
     fn front_window(&self) -> Option<Region> {
         let w = self.windows.iter().find(|w| w.pid == self.front.pid)?;
@@ -368,29 +377,9 @@ fn sanitize(marks: Vec<Mark>, lines: &[Line]) -> Vec<Mark> {
         .collect()
 }
 
-#[cfg(target_os = "macos")]
-fn screen_access() -> bool {
-    extern "C" {
-        fn CGPreflightScreenCaptureAccess() -> bool;
-        fn CGRequestScreenCaptureAccess() -> bool;
-    }
-    // SAFETY: plain CoreGraphics queries with no arguments. The request call shows the system prompt once.
-    unsafe { CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() }
-}
-#[cfg(not(target_os = "macos"))]
-fn screen_access() -> bool {
-    true
-}
-
-/// scripts/build-ocr.sh puts the helper (text reader, window list, cropper) next to the models directory.
-fn tool() -> Option<PathBuf> {
-    let p = crate::models::dir().parent()?.join("bin/ocr");
-    p.exists().then_some(p)
-}
-
 /// The app in front right now.
 pub fn front_app() -> Option<String> {
-    desk().map(|d| d.front.app)
+    crate::platform::current().frontmost_app()
 }
 
 /// Names of the apps with windows open, the one in front first.
@@ -431,13 +420,6 @@ pub fn locate(db: &Db, target: &str) -> Res<(f64, f64)> {
     found
 }
 
-/// Left-click at a point of the main display (0..1000 each way).
-pub fn click(x: f64, y: f64) -> Result<(), String> {
-    let (d, t) = (desk().ok_or("I can't read the display.")?, tool().ok_or("the screen helper isn't built (run scripts/build-ocr.sh)")?);
-    let ok = std::process::Command::new(t).arg("--click").args([format!("{:.0}", x / 1000.0 * d.display.w), format!("{:.0}", y / 1000.0 * d.display.h)]).status().is_ok_and(|s| s.success());
-    if ok { Ok(()) } else { Err("the click failed; Sunday may need Accessibility permission".into()) }
-}
-
 /// A ring round a point, so the user sees what Sunday means before it clicks.
 pub fn preview(app: &AppHandle, x: f64, y: f64, label: &str) {
     let m = Mark { kind: "circle".into(), x: x - 20.0, y: y - 20.0, w: 40.0, h: 40.0, label: label.chars().take(40).collect(), line: -1, to_line: -1, to: None };
@@ -445,19 +427,7 @@ pub fn preview(app: &AppHandle, x: f64, y: f64, label: &str) {
 }
 
 fn desk() -> Option<Desk> {
-    let out = std::process::Command::new(tool()?).arg("--windows").output().ok().filter(|o| o.status.success())?;
-    serde_json::from_slice(&out.stdout).ok()
-}
-
-/// Text in an image with exact boxes. Empty (never an error) if the helper isn't built or fails:
-/// pointing then falls back to the vision model's own coordinates.
-fn read_text(image: &Path) -> Vec<Line> {
-    let Some(tool) = tool() else {
-        eprintln!("[screen] no helper tool (run scripts/build-ocr.sh): pointing will be approximate");
-        return vec![];
-    };
-    let out = std::process::Command::new(tool).arg(image).output().ok().filter(|o| o.status.success());
-    out.and_then(|o| serde_json::from_slice::<Vec<Line>>(&o.stdout).ok()).unwrap_or_default()
+    crate::platform::current().desk()
 }
 
 fn tmp(name: &str) -> PathBuf {
@@ -466,13 +436,8 @@ fn tmp(name: &str) -> PathBuf {
 
 /// A full-resolution screenshot of the main display, in a temp file the caller must delete.
 fn grab() -> Res<PathBuf> {
-    if !screen_access() {
-        return Err(llm::UserMsg("I need screen recording permission. Allow it in System Settings, Privacy and Security, Screen Recording, then restart me.".into()).into());
-    }
     let full = tmp("screen");
-    if !std::process::Command::new("screencapture").args(["-x", "-m", "-t", "jpg"]).arg(&full).status()?.success() {
-        return Err("the screenshot failed".into());
-    }
+    crate::platform::current().screenshot(&full)?;
     Ok(full)
 }
 
@@ -481,17 +446,12 @@ fn grab() -> Res<PathBuf> {
 fn view(full: &Path, region: Region, edge: &str) -> Res<Seen> {
     let (crop, small) = (tmp("crop"), tmp("small"));
     let run = || -> Res<(Vec<u8>, Vec<Line>)> {
-        let cropped = region != Region::WHOLE
-            && tool().is_some_and(|t| {
-                std::process::Command::new(t)
-                    .arg("--crop").arg(full).arg(&crop)
-                    .args([region.x, region.y, region.w, region.h].map(|v| format!("{v:.1}")))
-                    .status().is_ok_and(|s| s.success())
-            });
+        let os = crate::platform::current();
+        let cropped = region != Region::WHOLE && os.crop(full, &crop, region);
         let src = if cropped { &crop } else { full };
-        let lines = read_text(src);
+        let lines = os.ocr(src);
         // Smaller is faster for the model; falls back to the full image if resizing fails.
-        let resized = std::process::Command::new("sips").args(["-Z", edge, "--out"]).arg(&small).arg(src).output().is_ok_and(|o| o.status.success());
+        let resized = os.resize(src, &small, edge);
         Ok((std::fs::read(if resized { &small } else { src })?, lines))
     };
     let res = run();
@@ -626,7 +586,7 @@ pub fn show(app: &AppHandle, marks: &[Mark], ttl: u64) {
         let _ = win.set_size(PhysicalSize::new(m.size().width, m.size().height));
         let _ = win.set_position(PhysicalPosition::new(m.position().x, m.position().y));
     }
-    crate::order_front(app, &win);
+    crate::platform::order_front(app, &win);
     let _ = app.emit("overlay", json!({"marks": marks}));
     let app = app.clone();
     std::thread::spawn(move || {

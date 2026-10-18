@@ -11,6 +11,8 @@ mod decision;
 #[cfg(all(test, feature = "voice"))]
 mod eval;
 #[cfg(feature = "voice")]
+mod platform;
+#[cfg(feature = "voice")]
 mod screen;
 #[cfg(feature = "voice")]
 mod skills;
@@ -47,40 +49,6 @@ const EXIT_ANIM: Duration = Duration::from_millis(220); // keep in sync with Hud
 const WAKE_HIDE_AFTER: Duration = Duration::from_secs(10); // matches stt::IDLE: talk on without the wake word
 const BOTTOM_MARGIN: f64 = 16.0; // logical px (~1em) above the bottom of the usable screen
 
-/// Shows a window without activating the app (activation drags the main window forward too).
-/// AppKit calls must run on the main thread, or the process aborts.
-pub(crate) fn order_front(app: &AppHandle, win: &WebviewWindow) {
-    let win = win.clone();
-    let _ = app.run_on_main_thread(move || {
-        #[cfg(target_os = "macos")]
-        if let Ok(ns) = win.ns_window() {
-            // SAFETY: ns_window is a live NSWindow owned by this webview window.
-            unsafe {
-                let w = ns as *mut objc2::runtime::AnyObject;
-                let _: () = objc2::msg_send![w, orderFrontRegardless];
-            }
-            return;
-        }
-        let _ = win.show();
-    });
-}
-
-/// Never takes clicks or focus, and floats over every Space (incl. fullscreen apps), so showing it
-/// doesn't switch Spaces or raise other windows. Call from the main thread (setup).
-fn float_everywhere(win: &WebviewWindow) {
-    let _ = win.set_ignore_cursor_events(true);
-    #[cfg(target_os = "macos")]
-    if let Ok(ns) = win.ns_window() {
-        const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
-        const FULLSCREEN_AUXILIARY: usize = 1 << 8;
-        // SAFETY: ns is the window's live NSWindow, and this runs on the main thread.
-        unsafe {
-            let w = ns as *mut objc2::runtime::AnyObject;
-            let _: () = objc2::msg_send![w, setCollectionBehavior: CAN_JOIN_ALL_SPACES | FULLSCREEN_AUXILIARY];
-        }
-    }
-}
-
 /// The HUD pill. `wake_until` keeps it up after the wake word; holding fn keeps it up too.
 #[derive(Clone)]
 struct Hud {
@@ -110,7 +78,7 @@ impl Hud {
     /// `show()` activates the app, which drags the main window to the front too.
     /// AppKit calls must run on the main thread, or the process aborts.
     fn show_without_activating(&self) {
-        order_front(&self.app, &self.win);
+        platform::order_front(&self.app, &self.win);
     }
 
     fn hide(&self) {
@@ -145,29 +113,12 @@ impl Hud {
     }
 }
 
-/// fn state via CGEventSourceFlagsState: no event tap, so no Input Monitoring prompt and no
-/// key-translation crash (rdev's listener aborts the process on recent macOS).
-#[cfg(target_os = "macos")]
-fn fn_down() -> bool {
-    extern "C" {
-        fn CGEventSourceFlagsState(state: i32) -> u64;
-    }
-    const COMBINED_SESSION: i32 = 0;
-    const FN_FLAG: u64 = 1 << 23;
-    // ponytail: arrow/F-keys also set this flag; fine for a hold-to-talk key.
-    unsafe { CGEventSourceFlagsState(COMBINED_SESSION) & FN_FLAG != 0 }
-}
-#[cfg(not(target_os = "macos"))]
-fn fn_down() -> bool {
-    false
-}
-
 fn watch_fn(hud: Hud) {
     std::thread::spawn(move || {
         let mut held = false;
         loop {
             std::thread::sleep(Duration::from_millis(30));
-            let now = fn_down();
+            let now = platform::fn_down();
             if now != held {
                 held = now;
                 if held { hud.show() } else if !hud.woken() { hud.hide() }
@@ -189,7 +140,7 @@ fn on_speech(hud: &Hud, text: &str, is_final: bool) -> Option<String> {
             hud.wake();
         }
         text[i + WAKE.len()..].trim_start_matches([',', '.', ' ', '!', '?'])
-    } else if hud.woken() || fn_down() {
+    } else if hud.woken() || platform::fn_down() {
         text
     } else {
         if is_final {
@@ -256,7 +207,7 @@ fn listen(hud: Hud) {
                         }
                     }
                 }
-                let fn_held = fn_down();
+                let fn_held = platform::fn_down();
                 let mut muted = tts::speaking(); // our own voice: only the keyword spotter listens
                 if muted && fn_held {
                     tts::interrupt(); // holding fn barges in
@@ -747,9 +698,9 @@ fn main() {
             app.manage(Tts(Mutex::new(tts::spawn(app.handle().clone()))));
 
             let hud_win = app.get_webview_window("hud").expect("hud window");
-            float_everywhere(&hud_win);
+            platform::float_everywhere(&hud_win);
             if let Some(overlay) = app.get_webview_window("overlay") {
-                float_everywhere(&overlay);
+                platform::float_everywhere(&overlay);
             }
 
             let hud = Hud {
