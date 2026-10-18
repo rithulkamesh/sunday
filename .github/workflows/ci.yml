@@ -9,25 +9,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        os: [macos-latest]
     runs-on: ${{ matrix.os }}
-    # The code is macOS-first until the platform layer (#21) lands; Windows and Linux report but don't block.
-    continue-on-error: ${{ matrix.os != 'macos-latest' }}
+    # macOS only until the platform layer (#21) lands; add windows-latest and ubuntu-latest back then.
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - name: Linux system libraries
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev
       # Other tests need Ollama, so run the deterministic ones by name.
       - name: Tests (no model needed)
         working-directory: src-tauri
-        run: cargo test --bin sunday -- eval_suite splits_sentences context_goes json_retries unsafe_steps yes_and_no
+        run: cargo test --bin sunday -- eval_suite splits_sentences context_goes json_retries unsafe_steps yes_and_no conformance
 
   frontend:
     runs-on: ubuntu-latest
