@@ -1,0 +1,5 @@
+# MLX's Metal kernels are compiled with the Metal language version that goes with this target. Pinning it keeps the
+# build the same on every Xcode: the newest betas reject kernels that older ones compile. (Newer Apple Neural
+# Accelerator kernels need macOS 26.2+, so they stay off.)
+[env]
+MACOSX_DEPLOYMENT_TARGET = "15.0"
