@@ -6,6 +6,43 @@ use crate::llm::{self, Res};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+/// Eval sandbox (test builds only, so there is no switch in the real app that skips a safety check): a fake home
+/// folder, a canned web, and a record of what would have happened to the machine instead of doing it.
+#[cfg(test)]
+pub mod sandbox {
+    use std::{cell::RefCell, path::PathBuf};
+
+    #[derive(Default)]
+    pub struct Sandbox {
+        pub home: PathBuf,
+        pub web: String,
+        pub effects: Vec<String>,
+    }
+
+    thread_local!(static ACTIVE: RefCell<Option<Sandbox>> = const { RefCell::new(None) });
+
+    /// Runs `f` with `sb` in force on this thread; hands the sandbox back with its recorded effects.
+    pub fn run<R>(sb: Sandbox, f: impl FnOnce() -> R) -> (R, Sandbox) {
+        ACTIVE.with(|a| *a.borrow_mut() = Some(sb));
+        let r = f();
+        (r, ACTIVE.with(|a| a.borrow_mut().take()).unwrap())
+    }
+
+    pub fn on() -> bool {
+        ACTIVE.with(|a| a.borrow().is_some())
+    }
+    pub fn home() -> Option<PathBuf> {
+        ACTIVE.with(|a| a.borrow().as_ref().map(|s| s.home.clone()))
+    }
+    pub fn web() -> Option<String> {
+        ACTIVE.with(|a| a.borrow().as_ref().map(|s| s.web.clone()))
+    }
+    /// Notes an effect when sandboxed; true means "don't really do it".
+    pub fn record(effect: String) -> bool {
+        ACTIVE.with(|a| a.borrow_mut().as_mut().map(|s| s.effects.push(effect)).is_some())
+    }
+}
+
 const MAX_STEPS: u8 = 6;
 const TOOLS: [&str; 9] = ["web_search", "look_at_screen", "recall", "open_app", "open_url", "open_path", "type_text", "click", "finish"];
 
@@ -71,6 +108,10 @@ const BROWSERS: [&str; 10] = ["Dia", "Arc", "Safari", "Google Chrome", "Firefox"
 
 /// A browser the user already has open (the one nearest the front), if any.
 fn browser_open() -> Option<String> {
+    #[cfg(test)]
+    if sandbox::on() {
+        return None;
+    }
     crate::screen::open_apps().into_iter().find(|a| BROWSERS.contains(&a.as_str()))
 }
 
@@ -82,6 +123,10 @@ fn needs_yes(s: &Step, st: &State) -> bool {
 }
 
 fn home() -> std::path::PathBuf {
+    #[cfg(test)]
+    if let Some(h) = sandbox::home() {
+        return h;
+    }
     std::env::var_os("HOME").map(Into::into).unwrap_or_default()
 }
 
@@ -125,6 +170,10 @@ fn describe(s: &Step) -> String {
 }
 
 fn run_cmd(cmd: &str, args: &[&str]) -> Result<String, String> {
+    #[cfg(test)]
+    if sandbox::record(format!("{cmd} {}", args.join(" "))) {
+        return Ok("done".into());
+    }
     let o = std::process::Command::new(cmd).args(args).output().map_err(|e| e.to_string())?;
     if o.status.success() { Ok("done".into()) } else { Err(String::from_utf8_lossy(&o.stderr).trim().chars().take(200).collect()) }
 }
@@ -145,10 +194,16 @@ fn exec(db: &Db, s: &Step, eyes: &Eyes) -> Result<String, String> {
             .map_err(|e| format!("typing failed ({e}); Sunday may need Accessibility permission")),
         "click" => {
             let (x, y) = s.at.ok_or("I haven't found where to click")?;
+            #[cfg(test)]
+            if sandbox::record(format!("click {x:.0},{y:.0}")) {
+                return Ok("clicked".into());
+            }
             crate::screen::click(x, y).map(|_| "clicked".to_string())
         }
         "look_at_screen" => (eyes.look)(if s.query.trim().is_empty() { "what is on my screen" } else { s.query.trim() }),
         "recall" => Ok(crate::memory::recall(db, &s.query, 4).iter().map(|f| f.text.clone()).collect::<Vec<_>>().join("; ")),
+        #[cfg(test)]
+        "web_search" if sandbox::on() => Ok(sandbox::web().unwrap_or_default()),
         "web_search" if db.kv_get("web").as_deref() != Some("on") => Err("web access is off in Settings".into()),
         "web_search" => crate::web::search(&s.query, 4).map(|r| r.iter().map(|(u, t)| format!("{t} ({u})")).collect::<Vec<_>>().join("\n")),
         _ => Err("nothing to run".into()),
