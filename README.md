@@ -12,7 +12,7 @@ We don't claim to have AGI. We claim a measurable target, and the repo is organi
 
 If the number moves, the harness is doing real work. If it doesn't, we learn that too. Either way it is a number, not a vibe.
 
-Track progress in the [v1 master issue](https://github.com/rithulkamesh/sunday/issues/31). Docs: [rithulkamesh.github.io/sunday](https://rithulkamesh.github.io/sunday/).
+Track progress in the [v1 master issue](https://github.com/rithulkamesh/sunday/issues/31). Docs: [sunday.rithul.dev](https://sunday.rithul.dev).
 
 ## Where it is today
 
