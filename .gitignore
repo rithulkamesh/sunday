@@ -4,3 +4,5 @@ dist
 src-tauri/target
 src-tauri/gen
 evals/runs/
+website/build
+website/.docusaurus

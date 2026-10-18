@@ -29,6 +29,8 @@ bunx tsc --noEmit              # frontend types
 
 ## Working with AI coding agents
 
+Full guide with a starter prompt: [docs/AGENTS.md](docs/AGENTS.md).
+
 Welcome and expected. Tips so your agent's PR lands:
 
 - Point it at the issue, `README.md`, `docs/REPO_MAP.md` and the module it will touch. [CLAUDE.md](CLAUDE.md) has the short version.

@@ -27,6 +27,8 @@ sherpa-onnx = { version = "1.13.8", default-features = false, features = ["stati
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
+# Provider API keys. Windows and Linux backends come with the platform layer (#21).
+keyring = { version = "3", features = ["apple-native"] }
 
 [features]
 default = ["voice"]

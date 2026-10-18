@@ -1,3 +1,9 @@
+---
+id: repo-map
+slug: /repo-map
+title: Repo map
+---
+
 # What's in the repo
 
 Tauri 2 app: a Rust backend (`src-tauri`) and a React 19 + Tailwind 4 frontend (`src`). Everything runs locally; the only network calls are to Ollama on `localhost:11434` and, if you switch web access on, the pages you ask it to read.

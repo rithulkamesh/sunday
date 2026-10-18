@@ -1,0 +1,38 @@
+name: Docs
+on:
+  push:
+    branches: [main]
+    paths: [docs/**, website/**, evals/**.jsonl, .github/workflows/docs.yml]
+  pull_request:
+    paths: [docs/**, website/**, evals/**.jsonl]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+        working-directory: website
+      # Fails on broken links, so a renamed doc can't ship a dead page.
+      - run: bun run build
+        working-directory: website
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/build
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

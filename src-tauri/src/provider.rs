@@ -4,7 +4,8 @@
 use crate::llm::{Res, UserMsg, KEEP_TEXT};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader};
-use std::sync::OnceLock;
+use crate::db::Db;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 pub trait Provider: Send + Sync {
@@ -19,25 +20,205 @@ pub trait Provider: Send + Sync {
     fn warm(&self, model: &str);
 }
 
-/// The provider in use, fixed for the life of the process.
-pub fn current() -> &'static dyn Provider {
-    static P: OnceLock<Box<dyn Provider>> = OnceLock::new();
-    &**P.get_or_init(|| from_env(|k| std::env::var(k).ok()))
+/// Which provider answers which job. Chat covers replies, quizzes, grading and skills; the planner picks the next step
+/// when Sunday acts on the computer. Vision and embeddings are Ollama only; the router is rules, not a model.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Role {
+    Chat,
+    Planner,
 }
 
-/// SUNDAY_PROVIDER = ollama (default) | openai | anthropic | gemini | nova. Anything but ollama sends prompts off
-/// this machine, so it is opt-in. Keys come from the usual env vars; OPENAI_BASE_URL points `openai` at OpenRouter,
-/// vLLM, LM Studio, a llama.cpp server and the like.
-fn from_env(env: impl Fn(&str) -> Option<String>) -> Box<dyn Provider> {
-    let get = |k: &str| env(k).unwrap_or_default();
-    match env("SUNDAY_PROVIDER").as_deref().unwrap_or("ollama") {
+impl Role {
+    pub fn parse(s: &str) -> Option<Role> {
+        match s {
+            "chat" => Some(Role::Chat),
+            "planner" => Some(Role::Planner),
+            _ => None,
+        }
+    }
+}
+
+type Pair = (Arc<dyn Provider>, Arc<dyn Provider>);
+static ROLES: RwLock<Option<Pair>> = RwLock::new(None);
+
+fn pair() -> Pair {
+    if let Some(p) = ROLES.read().unwrap().clone() {
+        return p;
+    }
+    let p = roles(&|_| None, std::env::var("SUNDAY_PROVIDER").ok(), &|k| std::env::var(k).ok());
+    *ROLES.write().unwrap() = Some(p.clone());
+    p
+}
+
+pub fn current() -> Arc<dyn Provider> {
+    pair().0
+}
+
+pub fn planner() -> Arc<dyn Provider> {
+    pair().1
+}
+
+pub fn ollama_models() -> Vec<String> {
+    Ollama.models()
+}
+
+/// Rebuilds both providers from Settings. Call at startup and after any Settings change.
+pub fn configure(db: &Db) {
+    *ROLES.write().unwrap() = Some(roles(&|k| db.kv_get(k), std::env::var("SUNDAY_PROVIDER").ok(), &resolver(db)));
+}
+
+/// The planner follows chat until it is set. Settings beat the SUNDAY_PROVIDER variable, which is the default for chat.
+fn roles(kv: &dyn Fn(&str) -> Option<String>, env_provider: Option<String>, get: &dyn Fn(&str) -> Option<String>) -> Pair {
+    let chat = kv("provider.chat").or(env_provider).unwrap_or_else(|| "ollama".into());
+    let planner = kv("provider.planner").unwrap_or_else(|| chat.clone());
+    (Arc::from(build(&chat, get)), Arc::from(build(&planner, get)))
+}
+
+/// Where a provider setting comes from: an environment variable wins, then the keychain, then Settings.
+fn resolver(db: &Db) -> impl Fn(&str) -> Option<String> + '_ {
+    move |k| std::env::var(k).ok().filter(|v| !v.is_empty()).or_else(|| secret_get(k)).or_else(|| db.kv_get(&format!("conf.{k}")))
+}
+
+/// What Settings may show and store. `local` providers keep prompts on this machine.
+pub struct Info {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub local: bool,
+    pub key_var: Option<&'static str>,
+    /// A non-secret setting: (variable, label, placeholder).
+    pub conf: Option<(&'static str, &'static str, &'static str)>,
+    pub suggested_model: &'static str,
+}
+
+pub const CATALOG: [Info; 5] = [
+    Info { id: "ollama", label: "Ollama", local: true, key_var: None, conf: None, suggested_model: crate::llm::MODEL },
+    Info { id: "openai", label: "OpenAI-compatible", local: false, key_var: Some("OPENAI_API_KEY"), conf: Some(("OPENAI_BASE_URL", "Server address", "https://api.openai.com/v1")), suggested_model: "gpt-4o-mini" },
+    Info { id: "anthropic", label: "Anthropic", local: false, key_var: Some("ANTHROPIC_API_KEY"), conf: None, suggested_model: "claude-haiku-5-5" },
+    Info { id: "gemini", label: "Gemini", local: false, key_var: Some("GEMINI_API_KEY"), conf: None, suggested_model: "gemini-2.5-flash" },
+    Info { id: "nova", label: "Amazon Nova (Bedrock)", local: false, key_var: Some("AWS_BEARER_TOKEN_BEDROCK"), conf: Some(("AWS_REGION", "Region", "us-east-1")), suggested_model: "us.amazon.nova-lite-v1:0" },
+];
+
+pub fn info(id: &str) -> Option<&'static Info> {
+    CATALOG.iter().find(|i| i.id == id)
+}
+
+/// Keys live in the macOS Keychain, never in the database. Other platforms use the environment only until their
+/// keychain backends land with the platform layer (#21).
+#[cfg(target_os = "macos")]
+fn entry(var: &str) -> Option<keyring::Entry> {
+    keyring::Entry::new("sunday", var).ok()
+}
+
+pub fn secret_get(var: &str) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    return entry(var).and_then(|e| e.get_password().ok()).filter(|v| !v.is_empty());
+    #[cfg(not(target_os = "macos"))]
+    return {
+        let _ = var;
+        None
+    };
+}
+
+pub fn secret_set(var: &str, value: &str) -> Result<(), String> {
+    if !CATALOG.iter().any(|i| i.key_var == Some(var)) {
+        return Err(format!("{var} isn't a provider key"));
+    }
+    #[cfg(target_os = "macos")]
+    return entry(var).ok_or("the Keychain isn't available")?.set_password(value.trim()).map_err(|e| e.to_string());
+    #[cfg(not(target_os = "macos"))]
+    return Err(format!("Saving keys needs the macOS Keychain for now. Set {var} in the environment instead."));
+}
+
+pub fn secret_clear(var: &str) -> Result<(), String> {
+    if !CATALOG.iter().any(|i| i.key_var == Some(var)) {
+        return Err(format!("{var} isn't a provider key"));
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(e) = entry(var) {
+        match e.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(())
+}
+
+/// Everything Settings shows. Keys are never sent to the UI, only whether one is set.
+pub fn settings(db: &Db) -> Value {
+    let chat_model = crate::llm::model_name(db);
+    let role = |r: &str, model: String| json!({"provider": db.kv_get(&format!("provider.{r}")), "model": model});
+    json!({
+        "roles": {
+            "chat": {"provider": db.kv_get("provider.chat").or_else(|| std::env::var("SUNDAY_PROVIDER").ok()).unwrap_or_else(|| "ollama".into()), "model": chat_model},
+            "planner": role("planner", planner_model(db)),
+        },
+        "providers": CATALOG.iter().map(|i| json!({
+            "id": i.id, "label": i.label, "local": i.local, "suggested_model": i.suggested_model,
+            "key_var": i.key_var,
+            "key_set": i.key_var.is_some_and(|v| std::env::var(v).is_ok_and(|x| !x.is_empty()) || secret_get(v).is_some()),
+            "key_from_env": i.key_var.is_some_and(|v| std::env::var(v).is_ok_and(|x| !x.is_empty())),
+            "conf": i.conf.map(|(var, label, placeholder)| json!({"var": var, "label": label, "placeholder": placeholder, "value": resolver(db)(var)})),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+pub fn planner_model(db: &Db) -> String {
+    db.kv_get("planner_model").unwrap_or_else(|| crate::llm::model_name(db))
+}
+
+/// Saves a role's provider and model, then applies them. The planner's provider is stored only once chosen, so it
+/// follows chat until then.
+pub fn set_role(db: &Db, role: Role, provider: &str, model: &str) -> Result<(), String> {
+    info(provider).ok_or_else(|| format!("unknown provider {provider}"))?;
+    let model = model.trim();
+    if model.is_empty() {
+        return Err("Pick a model first.".into());
+    }
+    let (p, m) = match role {
+        Role::Chat => ("provider.chat", "model"),
+        Role::Planner => ("provider.planner", "planner_model"),
+    };
+    db.kv_set(p, provider);
+    db.kv_set(m, model);
+    configure(db);
+    Ok(())
+}
+
+pub fn set_conf(db: &Db, var: &str, value: &str) -> Result<(), String> {
+    if !CATALOG.iter().any(|i| i.conf.is_some_and(|c| c.0 == var)) {
+        return Err(format!("{var} isn't a provider setting"));
+    }
+    db.kv_set(&format!("conf.{var}"), value.trim());
+    configure(db);
+    Ok(())
+}
+
+/// Models a provider offers, with the settings and key saved so far. Empty if it can't be reached.
+pub fn models_of(db: &Db, id: &str) -> Vec<String> {
+    info(id).map(|_| build(id, &resolver(db)).models()).unwrap_or_default()
+}
+
+/// One real request, so the user learns about a wrong key or model here and not mid-sentence.
+pub fn test(db: &Db, id: &str, model: &str) -> Result<Value, String> {
+    info(id).ok_or_else(|| format!("unknown provider {id}"))?;
+    let p = build(id, &resolver(db));
+    let t = std::time::Instant::now();
+    let reply = p.complete(model, &[json!({"role": "user", "content": "Reply with the single word ok."})], None, 30).map_err(|e| e.to_string())?;
+    Ok(json!({"ms": t.elapsed().as_millis() as u64, "reply": reply.trim().chars().take(40).collect::<String>()}))
+}
+
+/// A provider by name. Anything but ollama sends prompts off this machine, so it only happens when chosen.
+/// OPENAI_BASE_URL points `openai` at OpenRouter, vLLM, LM Studio, a llama.cpp server and the like.
+fn build(name: &str, get: &dyn Fn(&str) -> Option<String>) -> Box<dyn Provider> {
+    let key = |k: &str| get(k).unwrap_or_default();
+    match name {
         "ollama" => Box::new(Ollama),
-        "openai" => Box::new(OpenAi { base: env("OPENAI_BASE_URL").unwrap_or_else(|| "https://api.openai.com/v1".into()), key: get("OPENAI_API_KEY") }),
-        "gemini" => Box::new(OpenAi { base: "https://generativelanguage.googleapis.com/v1beta/openai".into(), key: get("GEMINI_API_KEY") }),
-        "anthropic" => Box::new(Anthropic { base: "https://api.anthropic.com".into(), key: get("ANTHROPIC_API_KEY") }),
-        "nova" => Box::new(Nova { base: format!("https://bedrock-runtime.{}.amazonaws.com", env("AWS_REGION").unwrap_or_else(|| "us-east-1".into())), key: get("AWS_BEARER_TOKEN_BEDROCK") }),
+        "openai" => Box::new(OpenAi { base: get("OPENAI_BASE_URL").unwrap_or_else(|| "https://api.openai.com/v1".into()), key: key("OPENAI_API_KEY") }),
+        "gemini" => Box::new(OpenAi { base: "https://generativelanguage.googleapis.com/v1beta/openai".into(), key: key("GEMINI_API_KEY") }),
+        "anthropic" => Box::new(Anthropic { base: "https://api.anthropic.com".into(), key: key("ANTHROPIC_API_KEY") }),
+        "nova" => Box::new(Nova { base: format!("https://bedrock-runtime.{}.amazonaws.com", get("AWS_REGION").unwrap_or_else(|| "us-east-1".into())), key: key("AWS_BEARER_TOKEN_BEDROCK") }),
         other => {
-            eprintln!("[llm] unknown SUNDAY_PROVIDER {other:?}, using ollama");
+            eprintln!("[llm] unknown provider {other:?}, using ollama");
             Box::new(Ollama)
         }
     }
@@ -396,16 +577,38 @@ mod conformance {
 
     #[test]
     fn provider_choice() {
-        let name = |pairs: &[(&str, &str)]| -> &str {
-            let m: std::collections::HashMap<String, String> = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-            from_env(|k| m.get(k).cloned()).name()
+        let get = |_: &str| None;
+        for (n, want) in [("ollama", "ollama"), ("bogus", "ollama"), ("openai", "openai"), ("gemini", "openai"), ("anthropic", "anthropic"), ("nova", "nova")] {
+            assert_eq!(build(n, &get).name(), want, "{n}");
+        }
+    }
+
+    #[test]
+    fn roles_follow_settings_then_environment() {
+        let names = |kv: &[(&str, &str)], env: Option<&str>| {
+            let m: std::collections::HashMap<String, String> = kv.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+            let (c, p) = roles(&|k| m.get(k).cloned(), env.map(String::from), &|_| None);
+            (c.name(), p.name())
         };
-        assert_eq!(name(&[]), "ollama");
-        assert_eq!(name(&[("SUNDAY_PROVIDER", "bogus")]), "ollama");
-        assert_eq!(name(&[("SUNDAY_PROVIDER", "openai")]), "openai");
-        assert_eq!(name(&[("SUNDAY_PROVIDER", "gemini")]), "openai");
-        assert_eq!(name(&[("SUNDAY_PROVIDER", "anthropic")]), "anthropic");
-        assert_eq!(name(&[("SUNDAY_PROVIDER", "nova")]), "nova");
+        assert_eq!(names(&[], None), ("ollama", "ollama"));
+        assert_eq!(names(&[], Some("anthropic")), ("anthropic", "anthropic"), "the variable sets chat, and the planner follows");
+        assert_eq!(names(&[("provider.chat", "ollama"), ("provider.planner", "nova")], Some("anthropic")), ("ollama", "nova"), "Settings beat the variable");
+        assert_eq!(names(&[("provider.chat", "openai")], None), ("openai", "openai"), "an unset planner follows chat");
+    }
+
+    #[test]
+    fn settings_reject_unknown_names_and_hide_nothing_but_keys() {
+        let db = Db::open(&std::env::temp_dir().join(format!("sunday-prov-{}.db", std::process::id()))).unwrap();
+        assert!(set_role(&db, Role::Chat, "skynet", "m").is_err());
+        assert!(set_role(&db, Role::Chat, "ollama", " ").is_err(), "a role needs a model");
+        assert!(set_conf(&db, "PATH", "/bin").is_err(), "only provider settings can be written");
+        assert!(secret_set("PATH", "x").is_err() && secret_clear("HOME").is_err(), "only provider keys can be stored");
+        set_role(&db, Role::Planner, "nova", "us.amazon.nova-lite-v1:0").unwrap();
+        let v = settings(&db);
+        assert_eq!(v["roles"]["planner"]["provider"], "nova");
+        assert!(!v.to_string().contains("sk-"), "keys never reach the UI");
+        assert_eq!(planner().name(), "nova");
+        assert_eq!(current().name(), "ollama");
     }
 
     /// Real provider, real network. Costs tokens on remote providers.
