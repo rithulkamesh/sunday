@@ -43,7 +43,7 @@ pub fn model_name(db: &Db) -> String {
 
 /// Models Ollama has locally; empty if it isn't running.
 pub fn installed_models() -> Vec<String> {
-    provider::current().models()
+    provider::ollama_models()
 }
 
 pub fn vision_model(db: &Db) -> String {
@@ -85,9 +85,10 @@ struct Ctx<'a> {
 fn warm_up(model: String) {
     std::thread::spawn(move || {
         let t = std::time::Instant::now();
-        provider::current().warm(&model);
+        let chat = provider::current();
+        chat.warm(&model);
         let _ = crate::memory::embed(&["warm up".to_string()], true);
-        eprintln!("[perf] models warmed up in {:?}", t.elapsed());
+        eprintln!("[perf] {} and embedding models warmed up in {:?}", chat.name(), t.elapsed());
     });
 }
 
@@ -240,7 +241,8 @@ fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
 
 /// Runs one stretch of the agent loop and speaks where it ended: the result, or the question it needs a yes to.
 fn act(c: &Ctx, run: impl FnOnce(&dyn Fn(&crate::agent::State) -> Res<crate::agent::Step>, &crate::agent::Eyes) -> Res<crate::agent::Out>) -> Res<String> {
-    let plan = crate::agent::model_plan(c.model);
+    let planner = provider::planner_model(c.db);
+    let plan = crate::agent::model_plan(&planner);
     let look = |t: &str| crate::screen::explain(&c.hud.app, c.db, t, false, &|_| {}, &|| tts::epoch() != c.ep).map(|r| r.text).map_err(|e| e.to_string());
     let locate = |t: &str| {
         let (x, y) = crate::screen::locate(c.db, t).map_err(|e| e.to_string())?;
@@ -411,10 +413,10 @@ pub fn run_skill(db: &Db, model: &str, id: &str, version: Option<i64>, input: &s
 
 /// Structured output: the schema constrains the model, serde validates, one retry, then give up.
 pub fn json<T: DeserializeOwned>(model: &str, system: &str, user: &str, schema: Value, timeout_s: u64) -> Res<T> {
-    json_via(provider::current(), model, system, user, schema, timeout_s)
+    json_via(&*provider::current(), model, system, user, schema, timeout_s)
 }
 
-fn json_via<T: DeserializeOwned>(p: &dyn Provider, model: &str, system: &str, user: &str, schema: Value, timeout_s: u64) -> Res<T> {
+pub fn json_via<T: DeserializeOwned>(p: &dyn Provider, model: &str, system: &str, user: &str, schema: Value, timeout_s: u64) -> Res<T> {
     let messages = [json!({"role": "system", "content": system}), json!({"role": "user", "content": user})];
     for _ in 0..2 {
         if let Ok(t) = serde_json::from_str(&p.complete(model, &messages, Some(schema.clone()), timeout_s)?) {

@@ -525,6 +525,49 @@ fn models() -> Vec<String> {
     llm::installed_models()
 }
 
+/// Providers, the model for each role, and whether each has a key. Keys themselves never leave the Rust side.
+#[cfg(feature = "voice")]
+#[tauri::command(async)]
+fn provider_settings(db: tauri::State<Arc<db::Db>>) -> serde_json::Value {
+    provider::settings(&db)
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn set_role(role: String, provider: String, model: String, db: tauri::State<Arc<db::Db>>) -> Result<(), String> {
+    provider::set_role(&db, provider::Role::parse(&role).ok_or("unknown role")?, &provider, &model)
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn set_provider_secret(var: String, value: Option<String>, db: tauri::State<Arc<db::Db>>) -> Result<(), String> {
+    match value.filter(|v| !v.trim().is_empty()) {
+        Some(v) => provider::secret_set(&var, &v),
+        None => provider::secret_clear(&var),
+    }?;
+    provider::configure(&db);
+    Ok(())
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command]
+fn set_provider_conf(var: String, value: String, db: tauri::State<Arc<db::Db>>) -> Result<(), String> {
+    provider::set_conf(&db, &var, &value)
+}
+
+#[cfg(feature = "voice")]
+#[tauri::command(async)]
+fn provider_models(id: String, db: tauri::State<Arc<db::Db>>) -> Vec<String> {
+    provider::models_of(&db, &id)
+}
+
+/// Sends one tiny request to the provider, so a wrong key or model shows up here.
+#[cfg(feature = "voice")]
+#[tauri::command(async)]
+fn test_provider(id: String, model: String, db: tauri::State<Arc<db::Db>>) -> Result<serde_json::Value, String> {
+    provider::test(&db, &id, &model)
+}
+
 #[cfg(feature = "voice")]
 #[tauri::command(async)]
 fn diagnostics(db: tauri::State<Arc<db::Db>>) -> serde_json::Value {
@@ -631,6 +674,18 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             #[cfg(feature = "voice")]
+            provider_settings,
+            #[cfg(feature = "voice")]
+            set_role,
+            #[cfg(feature = "voice")]
+            set_provider_secret,
+            #[cfg(feature = "voice")]
+            set_provider_conf,
+            #[cfg(feature = "voice")]
+            provider_models,
+            #[cfg(feature = "voice")]
+            test_provider,
+            #[cfg(feature = "voice")]
             speak,
             #[cfg(feature = "voice")]
             stop_speaking,
@@ -706,6 +761,7 @@ fn main() {
             #[cfg(feature = "voice")]
             {
                 let db = Arc::new(db::Db::open(&app.path().app_data_dir()?.join("sunday.db"))?);
+                provider::configure(&db);
                 let tts_tx = app.state::<Tts>().0.lock().unwrap().clone();
                 let reply = llm::spawn(hud.clone(), tts_tx, db.clone());
                 app.manage(db);

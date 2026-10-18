@@ -1,3 +1,9 @@
+---
+id: features
+slug: /features
+title: Features
+---
+
 # Features (what exists today)
 
 Moved from the README. Everything below is implemented and macOS-only for now (see [roadmap](https://github.com/rithulkamesh/sunday/issues/31)).

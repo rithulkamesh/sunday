@@ -325,7 +325,7 @@ pub fn start(db: &Db, task: &str, plan: &dyn Fn(&State) -> Res<Step>, eyes: &Eye
 
 /// The model picks the next step.
 pub fn model_plan(model: &str) -> impl Fn(&State) -> Res<Step> + '_ {
-    move |st| llm::json(model, SYSTEM, &prompt(st), schema(), 90)
+    move |st| llm::json_via(&*crate::provider::planner(), model, SYSTEM, &prompt(st), schema(), 90)
 }
 
 #[cfg(test)]
