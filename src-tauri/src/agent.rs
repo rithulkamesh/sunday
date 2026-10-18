@@ -74,6 +74,9 @@ pub struct State {
     /// What was already done (tool and its argument): the model tends to repeat a finished step instead of finishing.
     #[serde(default)]
     pub done: Vec<String>,
+    /// The task has read something untrusted (web, screen, memory). Set by the code, never by the model, and never cleared.
+    #[serde(default)]
+    pub tainted: bool,
     /// The step waiting for a yes.
     pub waiting: Option<Step>,
 }
@@ -115,11 +118,44 @@ fn browser_open() -> Option<String> {
     crate::screen::open_apps().into_iter().find(|a| BROWSERS.contains(&a.as_str()))
 }
 
-/// Typing and opening files always ask. Opening an app or a page is reversible, so it just happens when the user
-/// asked for it directly; but once anything read from the web, the screen or memory is in play, it asks too.
-fn needs_yes(s: &Step, st: &State) -> bool {
-    let tainted = st.log.iter().any(|l| ["- web_search", "- look_at_screen", "- recall"].iter().any(|p| l.starts_with(p)));
-    matches!(s.tool.as_str(), "open_path" | "type_text" | "click") || (matches!(s.tool.as_str(), "open_app" | "open_url") && tainted)
+/// How much harm a step can do, which decides whether it runs on its own.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Tier {
+    /// Only looks. Runs freely, but what it reads is untrusted, so it taints the rest of the task.
+    Read,
+    /// Changes the machine in a way that is visible and easy to undo (opens an app or a page). Runs when the user
+    /// asked for it directly; asks once the task has read anything untrusted.
+    Reversible,
+    /// Hard to undo, outward-facing (typing and clicking can send or submit things), or puts private files on screen.
+    /// Always asks.
+    Confirm,
+}
+
+/// The policy: one row per tool. A tool with no row is `Confirm`. The model can't reach this table; it only picks a tool
+/// name, and the table decides what happens next. Adding a tool means adding its row (a test checks).
+const POLICY: [(&str, Tier); 9] = [
+    ("web_search", Tier::Read),
+    ("look_at_screen", Tier::Read),
+    ("recall", Tier::Read),
+    ("finish", Tier::Read),
+    ("open_app", Tier::Reversible),
+    ("open_url", Tier::Reversible),
+    ("open_path", Tier::Confirm),
+    ("type_text", Tier::Confirm),
+    ("click", Tier::Confirm),
+];
+
+fn tier(tool: &str) -> Tier {
+    POLICY.iter().find(|(t, _)| *t == tool).map_or(Tier::Confirm, |(_, t)| *t)
+}
+
+/// Whether a step must wait for a yes. `tainted`: the task has already read the web, the screen or memory.
+fn needs_yes(s: &Step, tainted: bool) -> bool {
+    match tier(&s.tool) {
+        Tier::Read => false,
+        Tier::Reversible => tainted,
+        Tier::Confirm => true,
+    }
 }
 
 fn home() -> std::path::PathBuf {
@@ -229,19 +265,23 @@ pub fn drive(db: &Db, st: &mut State, plan: &dyn Fn(&State) -> Res<Step>, eyes: 
             }
         }
         st.done.push(key);
-        if needs_yes(&s, st) {
+        if needs_yes(&s, st.tainted) {
             let q = describe(&s);
             st.waiting = Some(s);
             save(db, st);
             return Ok(Out::Ask(q));
         }
-        observe(db, st, &s, eyes);
+        observe(db, st, &s, eyes, "auto");
     }
 }
 
-fn observe(db: &Db, st: &mut State, s: &Step, eyes: &Eyes) {
+/// Runs a step and records it. `how` says what let it run: "auto" (policy) or "approved" (the user said yes).
+fn observe(db: &Db, st: &mut State, s: &Step, eyes: &Eyes, how: &str) {
     let r = exec(db, s, eyes);
-    db.act_log(&st.task, &s.tool, &serde_json::to_string(s).unwrap_or_default(), &format!("{r:?}"));
+    if tier(&s.tool) == Tier::Read {
+        st.tainted = true;
+    }
+    db.act_log(&st.task, &s.tool, &format!("{} [{:?}, {how}]", serde_json::to_string(s).unwrap_or_default(), tier(&s.tool)), &format!("{r:?}"));
     let shown = match r {
         Ok(t) => t.chars().take(600).collect::<String>(),
         Err(e) => format!("failed: {e}"),
@@ -289,7 +329,7 @@ pub fn reply(text: &str) -> Reply {
 /// The user said yes: run the waiting step, then carry on.
 pub fn approve(db: &Db, mut st: State, plan: &dyn Fn(&State) -> Res<Step>, eyes: &Eyes) -> Res<Out> {
     if let Some(s) = st.waiting.take() {
-        observe(db, &mut st, &s, eyes);
+        observe(db, &mut st, &s, eyes, "approved");
     }
     drive(db, &mut st, plan, eyes)
 }
@@ -318,6 +358,48 @@ mod tests {
         let mut s = Step { tool: tool.into(), ..Step::default() };
         f(&mut s);
         s
+    }
+
+    #[test]
+    fn every_tool_has_a_policy_row() {
+        let mut rows: Vec<&str> = POLICY.iter().map(|(t, _)| *t).collect();
+        let mut tools = TOOLS.to_vec();
+        rows.sort();
+        tools.sort();
+        assert_eq!(rows, tools, "a new tool needs a row in POLICY, and a removed one must lose its row");
+        assert_eq!(tier("format_disk"), Tier::Confirm, "an unlisted tool is never trusted");
+    }
+
+    /// The whole policy as a table: (tool, tainted) -> must it wait for a yes?
+    #[test]
+    fn policy_table() {
+        for (tool, tainted, asks) in [
+            ("web_search", false, false), ("web_search", true, false), ("look_at_screen", true, false), ("recall", true, false),
+            ("open_app", false, false), ("open_app", true, true), ("open_url", false, false), ("open_url", true, true),
+            ("open_path", false, true), ("open_path", true, true), ("type_text", false, true), ("click", false, true), ("click", true, true),
+            ("format_disk", false, true),
+        ] {
+            assert_eq!(needs_yes(&st(tool, |_| {}), tainted), asks, "{tool} tainted={tainted}");
+        }
+    }
+
+    /// Reading marks the task untrusted for good, and only the code can do it. Acting doesn't.
+    #[test]
+    fn reading_taints_and_acting_does_not() {
+        let db = Db::open(&std::env::temp_dir().join(format!("sunday-taint-{}.db", std::process::id()))).unwrap();
+        let look = |_: &str| Ok("a page".to_string());
+        let locate = |_: &str| Ok((500.0, 500.0));
+        let eyes = Eyes { look: &look, locate: &locate };
+        let mut state = State::default();
+        let (_, sb) = sandbox::run(sandbox::Sandbox::default(), || {
+            observe(&db, &mut state, &st("open_app", |x| x.name = "Notes".into()), &eyes, "auto");
+            assert!(!state.tainted, "opening an app reads nothing");
+            observe(&db, &mut state, &st("look_at_screen", |_| {}), &eyes, "auto");
+            assert!(state.tainted);
+            observe(&db, &mut state, &st("open_app", |x| x.name = "Notes".into()), &eyes, "approved");
+            assert!(state.tainted, "nothing clears it");
+        });
+        assert_eq!(sb.effects.len(), 2);
     }
 
     #[test]
