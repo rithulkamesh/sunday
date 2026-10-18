@@ -27,6 +27,8 @@ mod notes;
 #[cfg(feature = "voice")]
 mod memory;
 #[cfg(feature = "voice")]
+mod localembed;
+#[cfg(feature = "voice")]
 mod models;
 #[cfg(feature = "voice")]
 mod speaker;
@@ -492,6 +494,12 @@ fn set_role(role: String, provider: String, model: String, db: tauri::State<Arc<
 }
 
 #[cfg(feature = "voice")]
+#[tauri::command(async)]
+fn set_embedder(id: String, db: tauri::State<Arc<db::Db>>) -> Result<(), String> {
+    provider::set_embedder(&db, &id)
+}
+
+#[cfg(feature = "voice")]
 #[tauri::command]
 fn set_provider_secret(var: String, value: Option<String>, db: tauri::State<Arc<db::Db>>) -> Result<(), String> {
     match value.filter(|v| !v.trim().is_empty()) {
@@ -533,7 +541,8 @@ fn diagnostics(db: tauri::State<Arc<db::Db>>) -> serde_json::Value {
         "concepts": db.graph().len(), "notes": db.docs().len(), "skills": db.skills().len(),
         "stt_models": std::path::Path::new(&models::path("silero_vad.onnx")).exists(),
         "ocr": models::dir().parent().is_some_and(|p| p.join("bin/ocr").exists()),
-        "embed_model": memory::embed_model(), "embed_installed": installed.iter().any(|m| m.starts_with(&memory::embed_model())),
+        "embed_model": memory::embed_model(), "embed_local": memory::local(),
+        "embed_installed": if memory::local() { localembed::installed() } else { installed.iter().any(|m| m.starts_with(&memory::embed_model())) },
         "facts": db.facts(100_000).len(),
     })
 }
@@ -630,6 +639,8 @@ fn main() {
             provider_settings,
             #[cfg(feature = "voice")]
             set_role,
+            #[cfg(feature = "voice")]
+            set_embedder,
             #[cfg(feature = "voice")]
             set_provider_secret,
             #[cfg(feature = "voice")]

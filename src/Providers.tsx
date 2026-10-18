@@ -12,7 +12,8 @@ type Provider = {
   conf: { var: string; label: string; placeholder: string; value: string | null } | null;
 };
 type Choice = { provider: string | null; model: string };
-type Data = { roles: { chat: Choice; planner: Choice }; providers: Provider[] };
+type Embed = { provider: "ollama" | "local"; model: string; local_installed: boolean };
+type Data = { roles: { chat: Choice; planner: Choice }; embed: Embed; providers: Provider[] };
 type Role = "chat" | "planner";
 type Form = { provider: string; model: string; key: string; conf: string };
 
@@ -22,7 +23,6 @@ const ROLES: { id: Role; name: string; does: string }[] = [
 ];
 const FIXED = [
   { name: "Vision", does: "Reads diagrams and non-text screens", value: "Ollama" },
-  { name: "Embeddings", does: "Memory and note search", value: "Ollama" },
   { name: "Router", does: "Decides what you meant", value: "Built-in rules" },
 ];
 
@@ -41,6 +41,78 @@ function Where({ local }: { local: boolean }) {
   );
 }
 
+
+const EMBEDDERS = [
+  { id: "ollama", label: "Ollama", model: "nomic-embed-text-v2-moe", note: "Needs Ollama running." },
+  { id: "local", label: "On this Mac", model: "all-MiniLM-L6-v2", note: "No Ollama. About 90 MB, English." },
+] as const;
+
+/** Memory and note search: where the embeddings come from. Tried before it is saved. */
+function Embeddings({ embed, reload, done }: { embed: Embed; reload: () => Promise<void>; done: (t: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [pick, setPick] = useState<Embed["provider"]>(embed.provider);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const current = EMBEDDERS.find((e) => e.id === embed.provider)!;
+  const chosen = EMBEDDERS.find((e) => e.id === pick)!;
+  const submit = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      await invoke("set_embedder", { id: pick });
+      await reload();
+      done(`Memory search now uses ${chosen.label} (${chosen.model}). Facts saved with the other one are found by keyword until they come up again.`);
+      setOpen(false);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <li className="px-5 py-4">
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">Embeddings</h3>
+          <p className="text-xs text-dim">Memory and note search</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-4">
+          <div className="text-right">
+            <p className="font-mono text-sm">{current.label} <span className="text-dim">{current.model}</span></p>
+            <p className="text-xs"><Where local /></p>
+          </div>
+          <button className={btn} aria-expanded={open} onClick={() => (setPick(embed.provider), setErr(""), setOpen(!open))}>{open ? "Close" : "Change"}</button>
+        </div>
+      </div>
+      {open && (
+        <form className="mt-4 space-y-4 border-t border-line pt-5" onSubmit={(e) => (e.preventDefault(), void submit())} onKeyDown={(e) => e.key === "Escape" && setOpen(false)} aria-label="Change embeddings">
+          <fieldset>
+            <legend className="mb-2 text-sm">Embedder</legend>
+            <div className="grid gap-2 min-[560px]:grid-cols-2">
+              {EMBEDDERS.map((o) => (
+                <label key={o.id} className="flex cursor-pointer flex-col gap-1 rounded-lg border border-line px-3 py-2.5 text-sm has-[:checked]:border-accent has-[:checked]:bg-raised has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent">
+                  <span className="flex items-center gap-2">
+                    <input type="radio" name="embedder" className="accent-white" autoFocus={o.id === pick} checked={pick === o.id} onChange={() => (setPick(o.id), setErr(""))} />
+                    {o.label}
+                    <span className="font-mono text-xs text-dim">{o.model}</span>
+                  </span>
+                  <span className="pl-6 text-xs text-dim">{o.note}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          {pick === "local" && !embed.local_installed && <p className="text-xs text-dim">Not downloaded yet. In a terminal: scripts/fetch-embed-model.sh</p>}
+          {err && <p role="alert" className="text-sm text-rose-400">{err}</p>}
+          <div className="flex gap-2">
+            <button type="submit" className={primary} disabled={busy}>{busy ? "Testing…" : "Test and use"}</button>
+            <button type="button" className={btn} onClick={() => setOpen(false)} disabled={busy}>Cancel</button>
+          </div>
+        </form>
+      )}
+    </li>
+  );
+}
+
 /** Which provider answers which job. One job is changed at a time, and only saved once it works. */
 export function Providers() {
   const [data, setData] = useState<Data | null>(null);
@@ -52,7 +124,7 @@ export function Providers() {
   const [done, setDone] = useState("");
   const opener = useRef<HTMLButtonElement | null>(null);
 
-  const load = () => invoke<Data>("provider_settings").then(setData);
+  const load = () => invoke<Data>("provider_settings").then((d) => setData(d));
   useEffect(() => void load(), []);
   useEffect(() => {
     if (!done) return;
@@ -224,6 +296,7 @@ export function Providers() {
             </li>
           );
         })}
+        <Embeddings embed={data.embed} reload={load} done={setDone} />
         {FIXED.map((f) => (
           <li key={f.name} className="flex items-center justify-between gap-4 px-5 py-4">
             <div className="min-w-0">
@@ -237,7 +310,7 @@ export function Providers() {
           </li>
         ))}
       </ul>
-      <p className="mt-3 text-xs text-dim">Vision, embeddings and the router stay on this Mac, so screenshots and notes are never sent out for indexing.</p>
+      <p className="mt-3 text-xs text-dim">Vision, embeddings and the router always run on this Mac, so screenshots and notes are never sent out.</p>
     </div>
   );
 }

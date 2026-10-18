@@ -15,6 +15,7 @@ type Diag = {
   stt_models: boolean;
   ocr: boolean;
   embed_model: string;
+  embed_local: boolean;
   embed_installed: boolean;
   facts: number;
 };
@@ -144,10 +145,10 @@ export function Settings() {
           <>
           {d && (
             <ul className="max-w-xl">
-              <Row ok={d.ollama} name="Ollama running" note="not reachable: start Ollama" />
+              <Row ok={d.ollama} name="Ollama running (screen vision needs it)" note="not reachable: start Ollama" />
               <Row ok={d.model_installed} name={`Model ${d.model}`} note={`run: ollama pull ${d.model}`} />
               <Row ok={d.vision_installed} name={`Vision model ${d.vision_model} (screen)`} note={`run: ollama pull ${d.vision_model}`} />
-              <Row ok={d.embed_installed} name={`Memory search model ${d.embed_model} · ${d.facts} facts`} note={`run: ollama pull ${d.embed_model}`} />
+              <Row ok={d.embed_installed} name={`Memory search model ${d.embed_model} · ${d.facts} facts`} note={d.embed_local ? "run: scripts/fetch-embed-model.sh" : `run: ollama pull ${d.embed_model}`} />
               <Row ok={d.ocr} name="Screen text reader (exact pointing)" note="run scripts/build-ocr.sh" />
               <Row ok={d.stt_models} name="Speech models" note="run scripts/fetch-models.sh" />
               <Row ok={d.concepts > 0} name={`Learning map · ${d.concepts} concepts`} />

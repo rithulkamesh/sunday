@@ -64,6 +64,7 @@ pub fn ollama_models() -> Vec<String> {
 
 /// Rebuilds both providers from Settings. Call at startup and after any Settings change.
 pub fn configure(db: &Db) {
+    crate::memory::set_local(db.kv_get("embed").as_deref() == Some("local"));
     *ROLES.write().unwrap() = Some(roles(&|k| db.kv_get(k), std::env::var("SUNDAY_PROVIDER").ok(), &resolver(db)));
 }
 
@@ -153,6 +154,7 @@ pub fn settings(db: &Db) -> Value {
             "chat": {"provider": db.kv_get("provider.chat").or_else(|| std::env::var("SUNDAY_PROVIDER").ok()).unwrap_or_else(|| "ollama".into()), "model": chat_model},
             "planner": role("planner", planner_model(db)),
         },
+        "embed": {"provider": if crate::memory::local() { "local" } else { "ollama" }, "model": crate::memory::embed_model(), "local_installed": crate::localembed::installed()},
         "providers": CATALOG.iter().map(|i| json!({
             "id": i.id, "label": i.label, "local": i.local, "suggested_model": i.suggested_model,
             "key_var": i.key_var,
@@ -197,6 +199,18 @@ pub fn set_conf(db: &Db, var: &str, value: &str) -> Result<(), String> {
 /// Models a provider offers, with the settings and key saved so far. Empty if it can't be reached.
 pub fn models_of(db: &Db, id: &str) -> Vec<String> {
     info(id).map(|_| build(id, &resolver(db)).models()).unwrap_or_default()
+}
+
+/// Chooses where memory search gets its embeddings: "ollama" or "local" (on this Mac, no Ollama). Tried first, so
+/// a missing model is found here and not the next time Sunday tries to remember something.
+pub fn set_embedder(db: &Db, id: &str) -> Result<(), String> {
+    if !["ollama", "local"].contains(&id) {
+        return Err(format!("unknown embedder {id}"));
+    }
+    crate::memory::embed_via(id == "local", &["hello".to_string()], true).map_err(|e| e.to_string())?;
+    db.kv_set("embed", id);
+    configure(db);
+    Ok(())
 }
 
 /// One real request, so the user learns about a wrong key or model here and not mid-sentence.
@@ -630,6 +644,7 @@ mod conformance {
         let db = Db::open(&std::env::temp_dir().join(format!("sunday-prov-{}.db", std::process::id()))).unwrap();
         assert!(set_role(&db, Role::Chat, "skynet", "m").is_err());
         assert!(set_role(&db, Role::Chat, "ollama", " ").is_err(), "a role needs a model");
+        assert!(set_embedder(&db, "skynet").is_err());
         assert!(set_conf(&db, "PATH", "/bin").is_err(), "only provider settings can be written");
         assert!(secret_set("PATH", "x").is_err() && secret_clear("HOME").is_err(), "only provider keys can be stored");
         set_role(&db, Role::Planner, "nova", "us.amazon.nova-lite-v1:0").unwrap();

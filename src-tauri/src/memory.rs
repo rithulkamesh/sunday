@@ -1,9 +1,10 @@
 //! Long-term memory: atomic facts with provenance. The model follows Devsper's memory service
 //! (svc/memory): each fact is one self-contained sentence with where it came from, how confident the
 //! extraction was and when it refers to, stored with an embedding and searched by similarity.
-//! Here it runs locally: SQLite for storage, Ollama for embeddings and extraction.
+//! Here it runs locally: SQLite for storage, Ollama or the on-device MiniLM model for embeddings.
 use crate::db::{Db, Fact, NewFact};
 use crate::speaker::cosine;
+use std::sync::atomic::{AtomicBool, Ordering};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -13,17 +14,49 @@ const EMBED_MODEL: &str = "nomic-embed-text-v2-moe"; // override with SUNDAY_EMB
 /// A new fact this similar to an existing one is the same fact.
 const DUPLICATE: f32 = 0.93;
 /// Recall only returns facts at least this relevant to the question. Measured with nomic-embed-text-v2-moe:
-/// questions about a fact score 0.36-0.55, unrelated ones at most 0.29 (see `similarity_calibration`).
-pub const RELEVANT: f32 = 0.33;
+/// questions about a fact score 0.36-0.55, unrelated ones at most 0.29. MiniLM: questions about a fact score 0.50-0.84, wrong facts at most 0.33, unrelated at most 0.21.
+const RELEVANT_NOMIC: f32 = 0.33;
+const RELEVANT_MINILM: f32 = 0.40;
 const WINDOW: usize = 3500;
 const MAX_WINDOWS: usize = 8;
 
+/// Which embedder is in use: Ollama's (default) or the on-device one. Set from Settings.
+static LOCAL: AtomicBool = AtomicBool::new(false);
+
+pub fn set_local(on: bool) {
+    LOCAL.store(on, Ordering::Relaxed);
+}
+
+pub fn local() -> bool {
+    LOCAL.load(Ordering::Relaxed)
+}
+
+pub fn relevant() -> f32 {
+    if local() { RELEVANT_MINILM } else { RELEVANT_NOMIC }
+}
+
 pub fn embed_model() -> String {
+    if local() {
+        return crate::localembed::NAME.into();
+    }
     std::env::var("SUNDAY_EMBED").unwrap_or_else(|_| EMBED_MODEL.into())
 }
 
-/// Embeddings from Ollama. nomic wants a task prefix: documents and queries are embedded differently.
+/// Similarity of two embeddings. Vectors from different models have different lengths and mean nothing together.
+fn sim(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() == b.len() { cosine(a, b) } else { 0.0 }
+}
+
+/// Embeddings from the chosen embedder. For Ollama's nomic, documents and queries get different task prefixes.
 pub fn embed(texts: &[String], query: bool) -> Res<Vec<Vec<f32>>> {
+    embed_via(local(), texts, query)
+}
+
+/// `embed` with the embedder named, so Settings can try one before switching to it.
+pub fn embed_via(local: bool, texts: &[String], query: bool) -> Res<Vec<Vec<f32>>> {
+    if local {
+        return crate::localembed::embed(texts);
+    }
     let prefix = if query { "search_query: " } else { "search_document: " };
     let input: Vec<String> = texts.iter().map(|t| format!("{prefix}{t}")).collect();
     let v: Value = ureq::post("http://localhost:11434/api/embed")
@@ -130,7 +163,7 @@ pub fn store(db: &Db, kind: &str, source: &str, title: &str, facts: &[Extracted]
     let (mut added, mut dup) = (0, 0);
     for (i, f) in facts.iter().enumerate() {
         let e = embs.as_ref().map(|v| &v[i]);
-        if e.is_some_and(|e| known.iter().any(|(_, k)| cosine(e, k) >= DUPLICATE)) {
+        if e.is_some_and(|e| known.iter().any(|(_, k)| sim(e, k) >= DUPLICATE)) {
             dup += 1;
             continue;
         }
@@ -184,7 +217,20 @@ pub fn remember(db: &Db, text: &str) -> bool {
 /// Falls back to keyword matching if the embedding model isn't available.
 pub fn recall(db: &Db, q: &str, k: usize) -> Vec<Fact> {
     let mut scored: Vec<(i64, f32)> = match embed(&[q.to_string()], true) {
-        Ok(v) => db.fact_embeddings().into_iter().map(|(id, e)| (id, cosine(&v[0], &e))).filter(|(_, s)| *s >= RELEVANT).collect(),
+        Ok(v) => {
+            let mut s: Vec<(i64, f32)> = Vec::new();
+            let mut embedded = std::collections::HashSet::new();
+            for (id, e) in db.fact_embeddings() {
+                if e.len() == v[0].len() {
+                    embedded.insert(id);
+                    s.push((id, cosine(&v[0], &e)));
+                }
+            }
+            s.retain(|(_, sc)| *sc >= relevant());
+            // Facts with no embedding from this model (stored before it was chosen, or while it was missing) are found by keyword.
+            s.extend(keyword_scores(db, q).into_iter().filter(|(id, _)| !embedded.contains(id)));
+            s
+        }
         Err(_) => keyword_scores(db, q),
     };
     scored.sort_by(|a, b| b.1.total_cmp(&a.1));
@@ -209,6 +255,9 @@ fn keyword_scores(db: &Db, q: &str) -> Vec<(i64, f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `set_local` is process-wide; tests that switch embedders take turns.
+    static EMBEDDER: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn splits_long_text_into_sentence_windows() {
@@ -247,6 +296,8 @@ mod tests {
     /// Needs Ollama with the embedding and text models. Remembers, extracts from text, deduplicates, recalls by meaning.
     #[test]
     fn remembers_and_recalls_by_meaning() {
+        let _turn = EMBEDDER.lock().unwrap_or_else(|e| e.into_inner());
+        set_local(false);
         let db = Db::open(&std::env::temp_dir().join(format!("sunday-mem-{}-b.db", std::process::id()))).unwrap();
         assert!(remember(&db, "my driving test is on the 8th of February"));
         assert!(!remember(&db, "my driving test is on the 8th of February"), "the same fact twice is stored once");
@@ -271,12 +322,13 @@ mod tests {
         assert_eq!(db.facts_delete_source("https://example.com/banker") > 0, true);
     }
 
-    /// Prints similarities so RELEVANT can be chosen from data (run with --nocapture).
+    /// Prints similarities so the thresholds can be chosen from data (run with --nocapture; SUNDAY_EMBED_LOCAL=1 for MiniLM).
     #[test]
     fn similarity_calibration() {
         if std::env::var("SUNDAY_MEM_CALIBRATE").is_err() {
             return;
         }
+        set_local(std::env::var("SUNDAY_EMBED_LOCAL").is_ok());
         let facts = ["my driving test is on the 8th of February", "The Banker's algorithm avoids deadlock by granting a resource request only if the system stays in a safe state",
             "TCP uses slow start and congestion avoidance to adapt its window", "I prefer studying in the mornings"];
         let qs = [("when do I take my test?", 0), ("when is my driving test", 0), ("how do you avoid deadlock safely?", 1), ("what is the banker's algorithm", 1),
@@ -287,5 +339,21 @@ mod tests {
             let sims: Vec<String> = f.iter().map(|e| format!("{:.2}", cosine(v, e))).collect();
             println!("{q:40} expects #{want}: {sims:?}");
         }
+    }
+
+    /// Facts saved with another embedder's vectors can't be compared to this one's, so they are found by keyword.
+    #[test]
+    fn switching_embedder_keeps_old_facts_findable() {
+        if !crate::localembed::installed() {
+            return;
+        }
+        let _turn = EMBEDDER.lock().unwrap_or_else(|e| e.into_inner());
+        let db = Db::open(&std::env::temp_dir().join(format!("sunday-mem-{}-c.db", std::process::id()))).unwrap();
+        let f = NewFact { kind: "user", source: "you", title: "", text: "My driving test is on the 8th of February", confidence: 1.0, event_date: "" };
+        db.fact_add(&f, Some(&[0.1; 768])); // as if saved by a 768-number model
+        set_local(true);
+        let got = recall(&db, "when is my driving test", 3);
+        set_local(false);
+        assert_eq!(got.len(), 1, "found by keyword");
     }
 }

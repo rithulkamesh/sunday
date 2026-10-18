@@ -15,7 +15,7 @@ A provider is where a model call goes. Sunday runs on **Ollama** by default, so 
 | Chat | Replies, quizzes, grading, skills | any |
 | Planner | Picks the next step when Sunday acts on your computer | any, follows Chat until you set it |
 | Vision | Reads diagrams and non-text screens | Ollama only |
-| Embeddings | Memory and note search | Ollama only |
+| Embeddings | Memory and note search | Ollama, or on this Mac (all-MiniLM-L6-v2, no Ollama) |
 | Router | Decides what an utterance means | built-in rules, no model |
 
 ## Set one up
@@ -47,13 +47,21 @@ scripts/fetch-mlx-model.sh mlx-community/Qwen3-4B-Instruct-2507-4bit
 
 Then in **Settings → Models → Change**, pick **MLX (on this Mac)** and the model. The first reply loads the model (a second or two); after that it stays in memory. Qwen2, Qwen3 and Gemma 4 checkpoints work.
 
-Two limits today: MLX can't constrain output to a JSON schema, so Sunday puts the schema in the prompt and retries once if the reply isn't valid JSON (small models slip more often than with Ollama); and memory search still uses Ollama's embedding model, falling back to keyword search when Ollama isn't there. Vision stays on Ollama too.
+Two limits: MLX can't constrain output to a JSON schema, so Sunday puts the schema in the prompt and retries once if the reply isn't valid JSON (small models slip more often than with Ollama); and screen vision still uses Ollama.
+
+For memory search without Ollama, download the on-device embedding model (about 90 MB, English) and choose it under **Embeddings** in the same screen:
+
+```sh
+scripts/fetch-embed-model.sh
+```
+
+It's tried before it's saved. Facts remembered with the other embedder are found by keyword until they come up again, so nothing is lost by switching.
 
 Building Sunday with MLX needs full Xcode (it ships the Metal compiler). Without it: `cargo build --no-default-features --features voice`.
 
 ## Privacy
 
-Anything but Ollama or MLX sends the prompt to that provider. A prompt can include your notes and memories that matched the question, and the text of web pages or the screen when you asked Sunday to look at them. Settings shows a warning next to every role that leaves your machine. Embeddings and vision stay on Ollama, so notes and screenshots are never sent for indexing.
+Anything but Ollama or MLX sends the prompt to that provider. A prompt can include your notes and memories that matched the question, and the text of web pages or the screen when you asked Sunday to look at them. Settings shows a warning next to every role that leaves your machine. Embeddings and vision always run on this Mac, so notes and screenshots are never sent for indexing.
 
 ## Cost
 
