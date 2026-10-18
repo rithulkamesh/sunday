@@ -95,7 +95,7 @@ export function Providers() {
     try {
       if (form.key.trim()) await invoke("set_provider_secret", { var: p.key_var, value: form.key });
       if (p.conf && form.conf !== (p.conf.value ?? "")) await invoke("set_provider_conf", { var: p.conf.var, value: form.conf });
-      if (!p.local) await invoke("test_provider", { id: p.id, model: form.model.trim() });
+      if (p.id !== "ollama") await invoke("test_provider", { id: p.id, model: form.model.trim() });
       await invoke("set_role", { role: editing, provider: p.id, model: form.model });
       await load();
       setDone(`${ROLES.find((r) => r.id === editing)!.name} now uses ${p.label} (${form.model.trim()}).`);
@@ -170,7 +170,9 @@ export function Providers() {
           <input id="model" list="models" spellCheck={false} className={`${input} font-mono`} aria-invalid={err?.field === "model"} aria-describedby="model-help" value={form!.model} onChange={(e) => setForm({ ...form!, model: e.target.value })} />
           <datalist id="models">{(models[p.id] ?? []).map((m) => <option key={m} value={m} />)}</datalist>
           <p id="model-help" className="mt-1.5 text-xs text-dim">
-            {models[p.id]?.length ? `${models[p.id].length} models found. Type to filter.` : `Suggested: ${p.suggested_model}.`}
+            {p.id === "mlx" && !(models.mlx ?? []).includes(form!.model)
+              ? `Not downloaded yet. In a terminal: scripts/fetch-mlx-model.sh ${form!.model}`
+              : models[p.id]?.length ? `${models[p.id].length} models found. Type to filter.` : `Suggested: ${p.suggested_model}.`}
           </p>
           {err?.field === "model" && <p role="alert" className="mt-1.5 text-sm text-rose-400">{err.text}</p>}
         </div>
@@ -183,7 +185,7 @@ export function Providers() {
         {err && !err.field && <p role="alert" className="text-sm text-rose-400">{err.text}</p>}
 
         <div className="flex gap-2">
-          <button type="submit" className={primary} disabled={busy}>{busy ? "Testing…" : p.local ? "Use this" : "Test and use"}</button>
+          <button type="submit" className={primary} disabled={busy}>{busy ? "Testing…" : p.id === "ollama" ? "Use this" : "Test and use"}</button>
           <button type="button" className={btn} onClick={close} disabled={busy}>Cancel</button>
         </div>
       </form>

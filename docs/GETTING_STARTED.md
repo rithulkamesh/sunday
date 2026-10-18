@@ -9,7 +9,7 @@ title: Get started
 ## Requirements
 
 - **macOS** (Apple Silicon recommended). Windows and Linux are on the roadmap, see [#21](https://github.com/rithulkamesh/sunday/issues/21).
-- [Bun](https://bun.sh), [Rust](https://rustup.rs) (stable), Xcode command line tools (`xcode-select --install`).
+- [Bun](https://bun.sh), [Rust](https://rustup.rs) (stable), Xcode (the full app, not only the command line tools: it has the Metal compiler that MLX needs; skip MLX with `--no-default-features --features voice`).
 - [Ollama](https://ollama.com), running locally.
 - Optional: `brew install poppler` to import PDFs.
 

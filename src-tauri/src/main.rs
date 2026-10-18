@@ -10,6 +10,8 @@ mod db;
 mod decision;
 #[cfg(all(test, feature = "voice"))]
 mod eval;
+#[cfg(all(feature = "voice", feature = "mlx", target_os = "macos"))]
+mod mlx;
 #[cfg(feature = "voice")]
 mod platform;
 #[cfg(feature = "voice")]
