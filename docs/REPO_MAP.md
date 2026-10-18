@@ -37,7 +37,7 @@ Every utterance becomes exactly one `Action` before anything runs. The `Decider`
 | `main.rs` | App setup, Tauri commands, hotkeys, and wiring of the audio, speech and model threads |
 | `llm.rs` | The turn loop: routes an `Action`, builds the prompt with memory and note context, calls Ollama (chat, vision, embeddings, JSON-schema output), runs skills, ends sessions. **Currently Ollama-only** (see the provider issues) |
 | `decision.rs` | `Action` enum, `Decider` trait, `Rules` router |
-| `agent.rs` | Acting on the computer: one typed `Step` at a time, approvals, path/URL safety checks, audit log. Tools: open app / page / file, type, click, web search, look at screen, recall |
+| `agent.rs` | Acting on the computer: one typed `Step` at a time, approvals by tier (`POLICY`: read / reversible / confirm, plus taint from anything read), path/URL safety checks, audit log. Tools: open app / page / file, type, click, web search, look at screen, recall |
 | `learn.rs` | Teaching: learning plans, concepts, prerequisites, quizzing, grading, spaced review |
 | `memory.rs` | Long-term facts with provenance, confidence, and embeddings; recall by meaning |
 | `notes.rs` | Import PDF / Markdown / text, chunk and index in SQLite FTS5 |
