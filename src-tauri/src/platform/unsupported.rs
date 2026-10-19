@@ -30,6 +30,9 @@ impl Platform for Unsupported {
     fn click(&self, _: f64, _: f64) -> Result<(), String> {
         no()
     }
+    fn press_keys(&self, _: &str) -> Result<(), String> {
+        no()
+    }
     fn screenshot(&self, _: &Path) -> Res<()> {
         Err(UserMsg(NO.into()).into())
     }
