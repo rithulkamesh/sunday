@@ -146,6 +146,7 @@ impl Db {
              CREATE TABLE IF NOT EXISTS facts(id INTEGER PRIMARY KEY, ts INTEGER, kind TEXT, source TEXT, title TEXT, text TEXT,
                  confidence REAL, event_date TEXT, embedding BLOB);
              CREATE TABLE IF NOT EXISTS actions(id INTEGER PRIMARY KEY, ts INTEGER, task TEXT, tool TEXT, args TEXT, outcome TEXT);
+             CREATE TABLE IF NOT EXISTS route_examples(id INTEGER PRIMARY KEY, ts INTEGER, last TEXT, text TEXT, route TEXT, embedding BLOB);
              CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(text, doc UNINDEXED, n UNINDEXED);",
         )?;
         let db = Self(Mutex::new(c));
@@ -461,6 +462,28 @@ impl Db {
         .unwrap()
         .flatten()
         .collect()
+    }
+
+    /// What the user has taught the router: (id, context, text, route, embedding).
+    pub fn route_examples(&self) -> Vec<(i64, String, String, String, Vec<f32>)> {
+        let c = self.0.lock().unwrap();
+        let mut st = c.prepare("SELECT id, last, text, route, embedding FROM route_examples").unwrap();
+        st.query_map([], |r| {
+            let b: Vec<u8> = r.get(4)?;
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, b.chunks_exact(4).map(|x| f32::from_le_bytes([x[0], x[1], x[2], x[3]])).collect()))
+        })
+        .unwrap()
+        .flatten()
+        .collect()
+    }
+
+    pub fn route_example_put(&self, last: &str, text: &str, route: &str, embedding: &[f32]) {
+        let blob: Vec<u8> = embedding.iter().flat_map(|x| x.to_le_bytes()).collect();
+        let _ = self.0.lock().unwrap().execute("INSERT INTO route_examples(ts, last, text, route, embedding) VALUES (?,?,?,?,?)", params![now(), last, text, route, blob]);
+    }
+
+    pub fn route_example_delete(&self, id: i64) {
+        let _ = self.0.lock().unwrap().execute("DELETE FROM route_examples WHERE id = ?", [id]);
     }
 
     pub fn fact_delete(&self, id: i64) {

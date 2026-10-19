@@ -29,6 +29,10 @@ mod memory;
 #[cfg(feature = "voice")]
 mod localembed;
 #[cfg(feature = "voice")]
+mod laya;
+#[cfg(feature = "voice")]
+mod corrections;
+#[cfg(feature = "voice")]
 mod models;
 #[cfg(feature = "voice")]
 mod speaker;

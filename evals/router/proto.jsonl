@@ -1,0 +1,48 @@
+{"last": null, "reply": "", "text": "hello there", "label": "chat"}
+{"last": null, "reply": "", "text": "what is a mutex", "label": "chat"}
+{"last": null, "reply": "", "text": "thanks, that helps", "label": "chat"}
+{"last": null, "reply": "", "text": "explain how the banker's algorithm avoids deadlock", "label": "chat"}
+{"last": null, "reply": "", "text": "do you think rust is better than go", "label": "chat"}
+{"last": null, "reply": "", "text": "show me how a mutex works", "label": "chat"}
+{"last": null, "reply": "", "text": "find me a better word for happy", "label": "chat"}
+{"last": null, "reply": "", "text": "what does sort mean", "label": "chat"}
+{"last": null, "reply": "", "text": "tell me a joke", "label": "chat"}
+{"last": null, "reply": "", "text": "what is on my screen", "label": "screen"}
+{"last": null, "reply": "", "text": "explain this page", "label": "screen"}
+{"last": null, "reply": "", "text": "what's this error", "label": "screen"}
+{"last": "screen", "reply": "You're in Claude, looking at a code review and error logs for a PR.", "text": "Could you go more in detail?", "label": "screen"}
+{"last": "screen", "reply": "You're looking at a PDF about operating systems.", "text": "tell me more", "label": "screen"}
+{"last": "screen", "reply": "You're looking at a PDF about operating systems.", "text": "what about the second paragraph", "label": "screen"}
+{"last": "screen", "reply": "You're looking at a PDF about operating systems.", "text": "and what does that mean", "label": "screen"}
+{"last": null, "reply": "", "text": "Sunday can you show me YouTube videos on machine learning", "label": "do"}
+{"last": null, "reply": "", "text": "pull up github", "label": "do"}
+{"last": null, "reply": "", "text": "play some jazz on spotify", "label": "do"}
+{"last": null, "reply": "", "text": "open notes and type hello", "label": "do"}
+{"last": null, "reply": "", "text": "go to news.ycombinator.com", "label": "do"}
+{"last": "do", "reply": "Done.", "text": "Uh can you sort by the best videos?", "label": "do"}
+{"last": "do", "reply": "Done.", "text": "I said can you sort by the best", "label": "do"}
+{"last": "do", "reply": "Done.", "text": "scroll down a bit", "label": "do"}
+{"last": "do", "reply": "Done.", "text": "now click the first one", "label": "do"}
+{"last": "do", "reply": "Done.", "text": "go back", "label": "do"}
+{"last": "do", "reply": "Done.", "text": "no, open the second result", "label": "do"}
+{"last": "do", "reply": "Done.", "text": "switch to Safari", "label": "do"}
+{"last": "do", "reply": "Done.", "text": "pause it", "label": "do"}
+{"last": "do", "reply": "Done.", "text": "Ranked by the best", "label": "do"}
+{"last": "do", "reply": "Done.", "text": "yes", "label": "chat"}
+{"last": "chat", "reply": "A mutex is a lock that one thread holds at a time.", "text": "can you go more in detail", "label": "chat"}
+{"last": "chat", "reply": "A mutex is a lock that one thread holds at a time.", "text": "why", "label": "chat"}
+{"last": null, "reply": "", "text": "what's the weather in Paris today", "label": "research"}
+{"last": null, "reply": "", "text": "who won the match last night", "label": "research"}
+{"last": null, "reply": "", "text": "latest news about the Rust 2026 edition", "label": "research"}
+{"last": null, "reply": "", "text": "find out about the CAP theorem", "label": "research"}
+{"last": null, "reply": "", "text": "close this tab", "label": "do"}
+{"last": null, "reply": "", "text": "refresh the page", "label": "do"}
+{"last": null, "reply": "", "text": "make the text bigger", "label": "do"}
+{"last": null, "reply": "", "text": "I think three blue one brown should be good", "label": "chat"}
+{"last": "chat", "reply": "Would you like me to suggest a machine learning video?", "text": "yes please open one", "label": "do"}
+{"last": "chat", "reply": "Would you like me to suggest a machine learning video?", "text": "yeah", "label": "chat"}
+{"last": null, "reply": "", "text": "remind me what I asked you yesterday", "label": "chat"}
+{"last": null, "reply": "", "text": "how do I center a div", "label": "chat"}
+{"last": null, "reply": "", "text": "look at my screen and tell me what's wrong", "label": "screen"}
+{"last": null, "reply": "", "text": "click the blue button", "label": "do"}
+{"last": null, "reply": "", "text": "type my email address", "label": "do"}

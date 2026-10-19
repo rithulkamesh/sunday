@@ -1,0 +1,17 @@
+# Runs Sunday's routing model (Laya, ONNX) as its own process. It is not part of the app's build: the app links
+# sherpa-onnx, which embeds its own ONNX Runtime, and two copies of it in one binary clash. The app talks to this
+# over stdin and stdout (see src-tauri/src/laya.rs). Build with scripts/build-laya.sh.
+[package]
+name = "laya-router"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+laya-onnx = { git = "https://github.com/NandhaKishorM/laya", rev = "ffc1420" }
+serde_json = "1"
+# laya-onnx is written against rc.13; a plain "2.0.0-rc.13" requirement would resolve to rc.15, which changed the API.
+ort = "=2.0.0-rc.13"
+
+# Not a member of any parent workspace.
+[workspace]
