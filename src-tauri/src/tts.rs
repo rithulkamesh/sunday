@@ -87,6 +87,10 @@ pub fn speaking() -> bool {
     UNTIL.lock().unwrap().is_some_and(|t| Instant::now() < t + TAIL)
 }
 
+/// Sunday's voice: a speaker id in kokoro-en-v0_19. 7 is bf_emma (British, female), 8 bf_isabella (British, female);
+/// 0..=4 are American women, 5..=6 American men, 9..=10 British men.
+pub const VOICE: i32 = 7;
+
 pub struct Speaker {
     tts: OfflineTts,
     _stream: cpal::Stream,
@@ -113,7 +117,7 @@ impl Speaker {
         let rate = tts.sample_rate() as u32;
         // The first synthesis is slow (lazy init); pay for it now instead of on the first reply.
         let none: Option<fn(&[f32], f32) -> bool> = None;
-        let _ = tts.generate_with_config("Hi.", &GenerationConfig { sid: 0, speed: 1.0, ..Default::default() }, none);
+        let _ = tts.generate_with_config("Hi.", &GenerationConfig { sid: VOICE, speed: 1.0, ..Default::default() }, none);
 
         let dev = cpal::default_host().default_output_device()?;
         let mut cfg = dev.default_output_config().ok()?.config();
@@ -139,7 +143,7 @@ impl Speaker {
 
     /// Synthesizes at the model's sample rate. Blocks for the synthesis time (RTF is well under 1).
     pub fn synth(&self, text: &str) -> Vec<f32> {
-        self.synth_sid(text, 0)
+        self.synth_sid(text, VOICE)
     }
 
     /// Same, in another of the model's voices (speaker id).
@@ -229,6 +233,15 @@ mod tests {
         assert!(!is_echo("answer")); // one word is too ambiguous to drop
         *UNTIL.lock().unwrap() = Some(Instant::now() - Duration::from_secs(10));
         assert!(!is_echo("I can answer questions and help")); // long ago: a real person
+    }
+
+    /// Plays a sentence out loud so the voice can be judged by ear: `cargo test speaks_aloud -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "needs the speech models from scripts/fetch-models.sh and a speaker"]
+    fn speaks_aloud() {
+        let s = Speaker::new().expect("tts unavailable");
+        s.speak("Good evening. I've opened Notes and typed hello. Is there anything else you need?", epoch());
+        std::thread::sleep(UNTIL.lock().unwrap().unwrap().saturating_duration_since(Instant::now()) + Duration::from_millis(500));
     }
 
     /// Needs the models from scripts/fetch-models.sh. Prints synthesis time vs audio length.
