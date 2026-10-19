@@ -46,7 +46,7 @@ Describe one in the Skills view and the model drafts it. Voice: "run skill learn
 - **Permissions on first use.** Typing and clicking need Accessibility. If it is missing, Sunday opens the right page in System Settings and says what to turn on, instead of retrying.
 - **Honest chat.** A conversational reply never claims it opened, clicked, played or typed something: only the agent acts, and a reply that says otherwise is replaced with "I haven't done that. Ask me directly."
 
-**Decisions.** Every utterance becomes one typed `Action` (`decision.rs`) before anything runs, and is checked against what's permitted. `Rules` is the deterministic router and always the fallback; short corrections and fillers ("uh", "I said…", "no, …") don't hide a command, and a follow-up such as "tell me more" after a screen answer can be routed by meaning with the [fine-tuned router](ROUTER.md).
+**Decisions.** Every utterance becomes one typed `Action` (`decision.rs`) before anything runs, and is checked against what's permitted. `Rules` is the deterministic router and always the fallback; short corrections and fillers ("uh", "I said…", "no, …") don't hide a command, and and with the optional on-device [routing model](ROUTER.md) installed, a follow-up such as "tell me more" after a screen answer, or "what's the weather in Paris", is routed by meaning instead of falling through to chat. Restating a command ("I said sort by the best") teaches the router at once.
 
 **⌘K** command palette; **Settings** has the model picker and a diagnostics checklist.
 

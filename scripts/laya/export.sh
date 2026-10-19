@@ -8,5 +8,8 @@ repo="${LAYA_REPO:?set LAYA_REPO to a clone of https://github.com/NandhaKishorM/
 tmp="$(mktemp -d)"
 python "$repo/laya-rust/tools/export_onnx.py" "$ckpt" --out "$tmp/laya-routing" --verify
 dest="${SUNDAY_MODELS:-$HOME/.cache/sunday/models}/laya-routing"
-rm -rf "$dest" && mkdir -p "$(dirname "$dest")" && cp -R "$tmp/laya-routing" "$dest"
+# export_onnx.py writes <out>/<checkpoint folder name>/; the app wants the files directly in laya-routing/
+src="$(find "$tmp/laya-routing" -name model.onnx -exec dirname {} \; | head -1)"
+[ -n "$src" ] || { echo "export produced no model.onnx" >&2; exit 1; }
+rm -rf "$dest" && mkdir -p "$(dirname "$dest")" && cp -R "$src" "$dest"
 echo "installed $dest"

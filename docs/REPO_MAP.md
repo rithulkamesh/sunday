@@ -42,7 +42,7 @@ flowchart TD
     llm --> ui["HUD, overlay and workspace<br/>(React)"]
 ```
 
-Every utterance becomes exactly one `Action` before anything runs. The `Decider` trait is the seam for a smarter router; `Rules` is the deterministic default and the fallback.
+Every utterance becomes exactly one `Action` before anything runs. `Rules` is the deterministic router and always the fallback; an optional on-device model (`laya.rs`) and a memory of corrections (`corrections.rs`) refine what it has no pattern for ([Router](ROUTER.md)).
 
 ## Backend (`src-tauri/src`)
 
@@ -53,6 +53,8 @@ Every utterance becomes exactly one `Action` before anything runs. The `Decider`
 | `provider.rs` | The `Provider` trait and its implementations: Ollama, MLX (in process), OpenAI-compatible, Anthropic, Gemini, Amazon Nova. Per-role settings (chat, planner), keys in the OS keychain, the conformance checks and their mock servers |
 | `mlx.rs` | The in-process MLX provider for Apple Silicon (no Ollama) |
 | `decision.rs` | `Action` enum, `Decider` trait, `Rules` router, `permitted()` |
+| `laya.rs` | The optional routing model: talks to the `tools/laya-router` program over stdin and stdout, builds the state text it was trained on, and applies the confidence gate (screen needs the most). Does nothing unless the model and program are installed |
+| `corrections.rs` | Instant learning for the router: spots a restated command right after a chat turn, stores the first utterance with its route and an embedding, and recalls close matches |
 | `agent.rs` | Acting on the computer: one typed `Step` at a time, planner prompt and schema, budgets (steps, time, failures), approvals by tier (`POLICY`) with taint, the typing and shortcut exceptions, path/URL safety checks, verifiers after each step, retry on failure, audit log. Tools: web search, look at screen, recall, open app / page / file, type, press keys, click, finish |
 | `learn.rs` | Teaching: learning plans, concepts, prerequisites, quizzing, grading, spaced review, and the persona prompt (`IDENTITY`) |
 | `memory.rs` | Long-term facts with provenance, confidence and embeddings; recall by meaning |
@@ -89,17 +91,18 @@ Every utterance becomes exactly one `Action` before anything runs. The `Decider`
 
 | Path | Purpose |
 |---|---|
-| `evals/` | Eval tasks, one JSON line each: `routing.jsonl`, `agent.jsonl`, `injection.jsonl`. Results land in `evals/runs/`. See [Evals](EVALS.md) |
+| `evals/` | Eval tasks, one JSON line each: `routing.jsonl`, `agent.jsonl`, `injection.jsonl`. Results land in `evals/runs/`. See [Evals](EVALS.md). `evals/router/` holds the held-out cases for the routing model |
 | `docs/`, `website/` | These docs and the site that serves them (Docusaurus, Mermaid diagrams) |
 | `.github/workflows/` | `ci.yml` (tests, frontend types) and `docs.yml` (site build and deploy) |
 | `scripts/fetch-models.sh` | Download VAD, wake word, speaker-ID, Parakeet and Kokoro into `~/.cache/sunday/models` |
 | `scripts/fetch-mlx-model.sh`, `scripts/fetch-embed-model.sh` | Download an MLX chat model, or the on-device embedding model |
+| `scripts/build-laya.sh`, `scripts/laya/`, `tools/laya-router/` | The routing model: build and install the sidecar program, and generate data, fine-tune, check, and export the model ([scripts/laya/README.md](https://github.com/rithulkamesh/sunday/blob/main/scripts/laya/README.md)) |
 | `scripts/build-ocr.sh`, `scripts/ocr.swift` | macOS Vision OCR helper: exact text line boxes, window list, cropping, the clicker |
 | `CLAUDE.md` | The short version of the rules, for coding agents |
 
 ## Database (SQLite, one file)
 
-`messages`, `kv`, `concepts`, `prereqs`, `attempts`, `reviews` (learning); `documents` + FTS index (notes); `facts` (memory); `skills`, `skill_runs` (skills); `actions` (audit log of everything the agent did). The relationships are in the [architecture diagram](ARCHITECTURE.md#memory-and-data).
+`messages`, `kv`, `concepts`, `prereqs`, `attempts`, `reviews` (learning); `documents` + FTS index (notes); `facts` (memory); `skills`, `skill_runs` (skills); `actions` (audit log of everything the agent did); `route_examples` (corrections the router learned from). The relationships are in the [architecture diagram](ARCHITECTURE.md#memory-and-data).
 
 ## Safety model today
 

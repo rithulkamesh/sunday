@@ -38,7 +38,7 @@ Honest status. This is early software, macOS only, and runs on a 4B local model 
 | **Sees** | Screenshot, local OCR with exact boxes, vision model for diagrams, click-through overlay that points at things |
 | **Understands** | Teaches any subject (plans, concepts, quizzes, spaced review), imports your notes |
 | **Notices** | Wake word, voice activation, your voiceprint, long-term memory with provenance |
-| **Decides** | Every utterance becomes one typed `Action`; a deterministic rules router with a fine-tuned decision model behind the same trait |
+| **Decides** | Every utterance becomes one typed `Action`; a deterministic rules router, plus an optional on-device decision model (fine-tuned Laya) and a memory of your corrections for what rules can't match |
 | **Acts** | Opens apps, pages and files, types, presses shortcuts, clicks. Checks each step really happened, retries what didn't, and stops honestly. All behind tiered approvals and an audit log |
 | **Yours** | Ollama, MLX on this Mac, or a hosted model for chat or planning; SQLite on disk; web access off unless you switch it on |
 | **Measured** | An eval suite with a sandbox, routing and agent tasks, and a prompt-injection red team, run on every PR |

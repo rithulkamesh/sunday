@@ -60,7 +60,7 @@ Green is shipped, amber is in review, blue is next, grey is later.
 |---|---|
 | **Agent loop and verifiers.** Budgets, a check of real state after every step, retry on failure, an honest stop. Typing your own words and the shortcuts for new note, save and new tab no longer ask | [#5](https://github.com/rithulkamesh/sunday/issues/5), [#6](https://github.com/rithulkamesh/sunday/issues/6), [PR #54](https://github.com/rithulkamesh/sunday/pull/54) |
 | **Hermetic tests, faster CI.** Default tests need nothing external; the rest are ignored with a reason and run with `bun run test:live` | [PR #55](https://github.com/rithulkamesh/sunday/pull/55) |
-| **A smarter router.** A fine-tuned Laya decision model behind the `Decider` trait, with `Rules` as the fallback, and an exemplar memory that learns from corrections at once | [Router](ROUTER.md), [#41](https://github.com/rithulkamesh/sunday/issues/41) |
+| **A smarter router.** An optional fine-tuned Laya decision model for what `Rules` has no pattern for (98% and 94% on two held-out sets, no conversation sent to an action), and a memory that learns from corrections at once. `Rules` stays the fallback | [Router](ROUTER.md), related to [#41](https://github.com/rithulkamesh/sunday/issues/41) |
 
 ## Next
 

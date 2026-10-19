@@ -64,7 +64,7 @@ Want a different voice or pace? Start with `SUNDAY_VOICE=8 SUNDAY_VOICE_SPEED=1.
 
 | You want to… | Start in |
 |---|---|
-| Change how requests are routed | `src-tauri/src/decision.rs` (`Action`, `Rules`, `Decider`); see [Router](ROUTER.md) |
+| Change how requests are routed | `src-tauri/src/decision.rs` (`Action`, `Rules`), `laya.rs` and `corrections.rs`; see [Router](ROUTER.md) |
 | Add or change something Sunday can *do* | `src-tauri/src/agent.rs` (`TOOLS`, `POLICY`, `check`, `exec`, `verify`), and the OS call in `src-tauri/src/platform/` |
 | Change prompts, turn handling, the model call | `src-tauri/src/llm.rs` |
 | Memory, facts, embeddings | `src-tauri/src/memory.rs`, `db.rs` |

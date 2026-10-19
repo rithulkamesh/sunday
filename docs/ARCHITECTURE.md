@@ -27,7 +27,7 @@ flowchart TB
     agent --> out
 ```
 
-Every utterance becomes exactly one `Action` before anything runs. `Rules` is the deterministic router and always the fallback; a smarter router plugs in behind the same `Decider` trait (see [Router](ROUTER.md)).
+Every utterance becomes exactly one `Action` before anything runs. `Rules` is the deterministic router and always the fallback; an optional on-device model and a memory of your corrections refine the cases it has no pattern for (see [Router](ROUTER.md)).
 
 ## A voice turn
 
@@ -270,9 +270,16 @@ erDiagram
         text key PK
         text value
     }
+    route_examples {
+        int id PK
+        text last
+        text text
+        text route
+        blob embedding
+    }
 ```
 
-`actions` is the audit log of everything the agent did, with the tier and whether it ran on its own or you approved it. `kv` holds settings and the saved state of a task waiting for a yes.
+`actions` is the audit log of everything the agent did, with the tier and whether it ran on its own or you approved it. `kv` holds settings and the saved state of a task waiting for a yes. `route_examples` holds what the router learned from your corrections.
 
 ## Tests and CI
 
