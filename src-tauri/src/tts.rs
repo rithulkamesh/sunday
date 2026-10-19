@@ -87,11 +87,10 @@ pub fn speaking() -> bool {
     UNTIL.lock().unwrap().is_some_and(|t| Instant::now() < t + TAIL)
 }
 
-/// Sunday's voice: a speaker id in kokoro-en-v0_19. 8 is bf_isabella (British, female), 7 bf_emma (also British, female);
-/// 0..=4 are American women, 5..=6 American men, 9..=10 British men.
-pub const VOICE: i32 = 8;
-/// Kokoro's default pace sounds flat and bored; a little quicker is livelier.
-pub const SPEED: f32 = 1.25;
+/// Sunday's voice: a speaker id in kokoro-en-v0_19. 0 is the default American voice; 1..=4 other American women, 5..=6
+/// American men, 7..=8 British women (bf_emma, bf_isabella), 9..=10 British men.
+pub const VOICE: i32 = 0;
+pub const SPEED: f32 = 1.0;
 
 /// The voice and pace. SUNDAY_VOICE and SUNDAY_VOICE_SPEED try others without a rebuild.
 fn voice() -> (i32, f32) {
@@ -254,7 +253,7 @@ mod tests {
     #[ignore = "needs the speech models from scripts/fetch-models.sh and a speaker"]
     fn speaks_aloud() {
         let s = Speaker::new().expect("tts unavailable");
-        for (i, (sid, speed)) in [(7, 1.0), (7, 1.12), (7, 1.25), (8, 1.0), (8, 1.12), (8, 1.25)].into_iter().enumerate() {
+        for (i, (sid, speed)) in [(0, 1.0), (0, 1.1), (7, 1.0), (8, 1.0)].into_iter().enumerate() {
             println!("option {}: voice {sid} speed {speed}", i + 1);
             s.enqueue(&s.synth_with(&format!("Option {}. Good evening. I've opened Notes. Is there anything else you need?", i + 1), sid, speed));
             std::thread::sleep(UNTIL.lock().unwrap().unwrap().saturating_duration_since(Instant::now()) + Duration::from_millis(700));
