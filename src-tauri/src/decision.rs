@@ -258,3 +258,39 @@ mod tests {
         assert!(permitted(&Remember("x".into()), known, false).is_err());
     }
 }
+
+#[cfg(test)]
+mod held_out {
+    use super::*;
+
+    /// How `Rules` alone does on the router's held-out cases (`evals/router`), the number a learned router has to beat.
+    /// Rules sees only the words, so a follow-up that depends on the last turn is out of its reach by design.
+    /// `real.jsonl` is the maintainer's own transcripts and isn't in git; without it only the shared cases run.
+    #[test]
+    fn rules_baseline() {
+        let route = |a: Action| match a {
+            Action::Do(_) => "do",
+            Action::Screen(_) => "screen",
+            Action::Research(_) => "research",
+            _ => "chat",
+        };
+        for name in ["proto", "real"] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../evals/router/{name}.jsonl"));
+            let Ok(text) = std::fs::read_to_string(path) else { continue };
+            let (mut ok, mut n, mut false_actions) = (0, 0, 0);
+            for line in text.lines().filter(|l| !l.trim().is_empty()) {
+                let v: serde_json::Value = serde_json::from_str(line).unwrap();
+                let (said, want) = (v["text"].as_str().unwrap(), v["label"].as_str().unwrap());
+                let got = route(Rules.decide(said, false));
+                n += 1;
+                ok += (got == want) as usize;
+                false_actions += (want == "chat" && got != "chat") as usize;
+                if got != want {
+                    println!("  {name}: rules said {got}, wanted {want}: {said}");
+                }
+            }
+            println!("rules on {name}: {ok}/{n} right, {false_actions} conversations wrongly sent to an action");
+            assert_eq!(false_actions, 0, "{name}: Rules must never turn conversation into an action");
+        }
+    }
+}

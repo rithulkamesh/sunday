@@ -130,18 +130,22 @@ Unverified steps are logged without the `(verified)` mark, so the planner and th
 ## Routing
 
 ```mermaid
-flowchart LR
+flowchart TD
     u["Utterance<br/>plus last action and reply"] --> r["Rules<br/>exact patterns"]
     r -- "a clear match" --> a["Action"]
-    r -- "chat" --> d["Smarter Decider<br/>optional"]
-    d -- "confident" --> a
-    d -- "unsure or not installed" --> chat["Chat"]
+    r -- "no pattern: chat" --> m["Corrections memory<br/>what you taught it"]
+    m -- "a close match in the same context" --> a
+    m -- "nothing close" --> d["Routing model (Laya)<br/>optional sidecar"]
+    d -- "sure enough" --> a
+    d -- "unsure, slow or not installed" --> chat["Chat"]
     a --> p{"permitted()?"}
     p -- "no" --> why["Say why"]
     p -- "yes" --> go["Run it"]
+    a -. "this turn restated the last one" .-> learn[("route_examples<br/>local table")]
+    learn -.-> m
 ```
 
-`Rules` never goes away. A smarter router only chooses where an ambiguous utterance goes, and `permitted()`, the tiers and the approvals run exactly as before. Details and measurements: [Router](ROUTER.md).
+`Rules` never goes away: it decides first, and it is the answer whenever the other two are missing, slow or unsure. The corrections memory and the routing model only choose where an utterance that matched no pattern goes, and `permitted()`, the tiers and the approvals run exactly as before, so a wrong route can waste a turn but cannot widen what Sunday may do. The model needs more confidence to send you to the screen (a screenshot nobody asked for is the costly mistake) than to an action. Details and measurements: [Router](ROUTER.md).
 
 Chat can't claim computer actions either. A chat reply that says it opened, clicked, played or typed something is cut off and replaced with an honest line, because in conversation nothing was done on the computer.
 

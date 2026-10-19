@@ -189,4 +189,43 @@ mod tests {
         let mut silent = Sidecar::spawn(Command::new("sh").arg("-c").arg("sleep 5")).unwrap();
         assert!(silent.ask("x", Duration::from_millis(100)).is_none(), "a sidecar that doesn't answer in time is dropped by the caller");
     }
+
+    /// The real path end to end: `Rules` first, then the model for what Rules left as chat, on the held-out cases in
+    /// `evals/router`. Prints the same numbers as `rules_baseline` in decision.rs, with the model added.
+    #[test]
+    #[ignore = "needs the routing model and sidecar (scripts/laya/export.sh, scripts/build-laya.sh)"]
+    fn router_end_to_end_on_the_held_out_sets() {
+        use crate::decision::{Action, Decider, Rules};
+        let mut side = Sidecar::spawn(&mut command().expect("sidecar or model not installed")).unwrap();
+        assert!(side.ask(&state(None, "", "hello"), Duration::from_secs(120)).is_some(), "the sidecar didn't start");
+        for name in ["proto", "real"] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../evals/router/{name}.jsonl"));
+            let Ok(text) = std::fs::read_to_string(path) else { continue };
+            let (mut ok, mut n, mut false_actions, mut rules_ok) = (0, 0, 0, 0);
+            for line in text.lines().filter(|l| !l.trim().is_empty()) {
+                let v: Value = serde_json::from_str(line).unwrap();
+                let (said, want) = (v["text"].as_str().unwrap(), v["label"].as_str().unwrap());
+                let mut got = match Rules.decide(said, false) {
+                    Action::Do(_) => "do",
+                    Action::Screen(_) => "screen",
+                    Action::Research(_) => "research",
+                    _ => "chat",
+                };
+                rules_ok += (got == want) as usize;
+                if got == "chat" {
+                    let (last, reply) = (v["last"].as_str(), v["reply"].as_str().unwrap_or(""));
+                    if let Some((choice, probs)) = side.ask(&state(last, reply, said), Duration::from_secs(10)) {
+                        got = pick(&choice, &probs).map_or("chat", Route::name);
+                    }
+                }
+                n += 1;
+                ok += (got == want) as usize;
+                false_actions += (want == "chat" && got != "chat") as usize;
+                if got != want {
+                    println!("  {name}: said {got}, wanted {want}: {said}");
+                }
+            }
+            println!("rules + model on {name}: {ok}/{n} right (rules alone {rules_ok}), {false_actions} conversations wrongly sent to an action");
+        }
+    }
 }
