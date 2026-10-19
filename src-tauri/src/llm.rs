@@ -534,6 +534,7 @@ fn chat(c: &Ctx, history: &[Value], ctx: &Context) -> Res<String> {
     let (mut full, mut pending) = (String::new(), String::new());
     let mut first = true; // the first chunk is cut at a comma so audio starts sooner
     let mut first_token = true;
+    let mut claimed = false; // the model said it did something on the computer; only the agent can do that
     provider::current().stream(c.model, &messages, &mut |tok| {
         if tts::epoch() != c.ep {
             return false;
@@ -548,6 +549,10 @@ fn chat(c: &Ctx, history: &[Value], ctx: &Context) -> Res<String> {
             if std::mem::replace(&mut first, false) {
                 eprintln!("[perf] model: first sentence ready after {:?}", t0.elapsed());
             }
+            if claims_action(&s) {
+                claimed = true;
+                return false;
+            }
             if c.voice {
                 tts::say(c.speak, s, c.ep);
             }
@@ -557,10 +562,24 @@ fn chat(c: &Ctx, history: &[Value], ctx: &Context) -> Res<String> {
     if tts::epoch() != c.ep {
         return Ok(String::new());
     }
+    if claimed || claims_action(&pending) {
+        return Ok(say(c, NOT_DONE));
+    }
     if c.voice && !pending.trim().is_empty() {
         tts::say(c.speak, pending, c.ep);
     }
     Ok(full.trim().to_string())
+}
+
+const NOT_DONE: &str = "I haven't done that. Ask me directly, like \"open YouTube\".";
+
+/// A chat reply that says it opened, clicked, played or typed something. In conversation nothing was done on the
+/// computer, so this is always false: small models say it anyway.
+fn claims_action(s: &str) -> bool {
+    let t = s.to_lowercase().replace('’', "'");
+    ["i've", "i have", "i just", "i"].iter().any(|who| {
+        ["opened", "clicked", "played", "typed", "sorted", "searched for", "pulled up", "launched", "started playing", "navigated to"].iter().any(|v| t.contains(&format!("{who} {v}")))
+    })
 }
 
 /// Pops the first complete sentence. A stop mark only counts once whitespace follows it,
@@ -623,6 +642,16 @@ mod tests {
         let ask = |replies: Vec<&'static str>| json_via::<Value>(&Canned(replies.into()), "m", "s", "u", json!({}), 1);
         assert_eq!(ask(vec!["nope", r#"{"a":1}"#]).unwrap()["a"], 1);
         assert!(ask(vec!["nope", "still nope"]).is_err());
+    }
+
+    #[test]
+    fn chat_may_not_claim_to_have_acted() {
+        for lie in ["I've opened the top machine learning video on YouTube.", "I opened Safari for you.", "I’ve clicked the filter button.", "Okay, I just played it."] {
+            assert!(claims_action(lie), "{lie}");
+        }
+        for fine in ["I can open apps when you ask directly.", "A mutex is opened by locking it.", "Do you want me to open YouTube?", "Opened files stay in memory until closed."] {
+            assert!(!claims_action(fine), "{fine}");
+        }
     }
 
     #[test]
