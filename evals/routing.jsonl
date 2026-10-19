@@ -16,3 +16,5 @@
 {"id":"clear-screen","say":"clear the screen","expect":"ClearScreen"}
 {"id":"screen-explain","say":"explain this problem","expect":"Screen(\"explain this problem\")"}
 {"id":"skill-run","say":"run skill summarize on the meeting notes","expect":"Skill { id: \"summarize\", input: \"the meeting notes\" }"}
+{"id":"do-show-youtube","say":"Sunday can you show me YouTube videos on machine learning?","expect":"Do(\"Sunday can you show me YouTube videos on machine learning\")"}
+{"id":"chat-show-me-how","say":"show me how a mutex works","expect":"Chat"}

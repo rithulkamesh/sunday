@@ -425,7 +425,7 @@ mod tests {
         let run = |text: &str, muted: bool| {
             let mut stt = Stt::new().expect("models missing");
             let mut audio = vec![0.0f32; 8_000];
-            audio.extend(rs.resample(&tts.synth(text), true));
+            audio.extend(rs.resample(&tts.synth_sid(text, 0), true));
             audio.extend(vec![0.0f32; 16_000]);
             let heard: Vec<String> = audio.chunks(1600).flat_map(|c| stt.push(c, muted)).filter_map(|h| match h {
                 Heard::Keyword(k, _) => Some(k),
@@ -448,7 +448,7 @@ mod tests {
         let rs = sherpa_onnx::LinearResampler::create(24_000, 16_000).unwrap();
         let mut stt = Stt::new().expect("models missing");
         let said = "This is a long reply that keeps going without any real pause between the sentences so the detector sees one continuous stretch of speech. ".repeat(4);
-        let audio = rs.resample(&tts.synth(&said), true);
+        let audio = rs.resample(&tts.synth_sid(&said, 0), true);
         assert!(audio.len() > 16_000 * 12, "need >12 s of speech, got {}", audio.len() / 16_000);
         for c in audio.chunks(1600) {
             stt.push(c, true);

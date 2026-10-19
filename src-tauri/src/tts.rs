@@ -90,6 +90,14 @@ pub fn speaking() -> bool {
 /// Sunday's voice: a speaker id in kokoro-en-v0_19. 7 is bf_emma (British, female), 8 bf_isabella (British, female);
 /// 0..=4 are American women, 5..=6 American men, 9..=10 British men.
 pub const VOICE: i32 = 7;
+/// Kokoro's default pace sounds flat and bored; a little quicker is livelier.
+pub const SPEED: f32 = 1.12;
+
+/// The voice and pace. SUNDAY_VOICE and SUNDAY_VOICE_SPEED try others without a rebuild.
+fn voice() -> (i32, f32) {
+    let get = |k: &str| std::env::var(k).ok().and_then(|v| v.parse().ok());
+    (get("SUNDAY_VOICE").map_or(VOICE, |v| v as i32), get("SUNDAY_VOICE_SPEED").unwrap_or(SPEED))
+}
 
 pub struct Speaker {
     tts: OfflineTts,
@@ -117,7 +125,7 @@ impl Speaker {
         let rate = tts.sample_rate() as u32;
         // The first synthesis is slow (lazy init); pay for it now instead of on the first reply.
         let none: Option<fn(&[f32], f32) -> bool> = None;
-        let _ = tts.generate_with_config("Hi.", &GenerationConfig { sid: VOICE, speed: 1.0, ..Default::default() }, none);
+        let _ = tts.generate_with_config("Hi.", &GenerationConfig { sid: voice().0, speed: voice().1, ..Default::default() }, none);
 
         let dev = cpal::default_host().default_output_device()?;
         let mut cfg = dev.default_output_config().ok()?.config();
@@ -143,12 +151,17 @@ impl Speaker {
 
     /// Synthesizes at the model's sample rate. Blocks for the synthesis time (RTF is well under 1).
     pub fn synth(&self, text: &str) -> Vec<f32> {
-        self.synth_sid(text, VOICE)
+        let (sid, speed) = voice();
+        self.synth_with(text, sid, speed)
     }
 
     /// Same, in another of the model's voices (speaker id).
     pub fn synth_sid(&self, text: &str, sid: i32) -> Vec<f32> {
-        let cfg = GenerationConfig { sid, speed: 1.0, ..Default::default() };
+        self.synth_with(text, sid, 1.0)
+    }
+
+    fn synth_with(&self, text: &str, sid: i32, speed: f32) -> Vec<f32> {
+        let cfg = GenerationConfig { sid, speed, ..Default::default() };
         let none: Option<fn(&[f32], f32) -> bool> = None;
         self.tts.generate_with_config(text, &cfg, none).map(|a| a.samples().to_vec()).unwrap_or_default()
     }
@@ -235,13 +248,17 @@ mod tests {
         assert!(!is_echo("I can answer questions and help")); // long ago: a real person
     }
 
-    /// Plays a sentence out loud so the voice can be judged by ear: `cargo test speaks_aloud -- --ignored --nocapture`.
+    /// Plays the same sentence in a few voices and paces, so one can be picked by ear:
+    /// `cargo test speaks_aloud -- --ignored --nocapture`, then set SUNDAY_VOICE and SUNDAY_VOICE_SPEED (or the constants).
     #[test]
     #[ignore = "needs the speech models from scripts/fetch-models.sh and a speaker"]
     fn speaks_aloud() {
         let s = Speaker::new().expect("tts unavailable");
-        s.speak("Good evening. I've opened Notes and typed hello. Is there anything else you need?", epoch());
-        std::thread::sleep(UNTIL.lock().unwrap().unwrap().saturating_duration_since(Instant::now()) + Duration::from_millis(500));
+        for (i, (sid, speed)) in [(7, 1.0), (7, 1.12), (7, 1.25), (8, 1.0), (8, 1.12), (8, 1.25)].into_iter().enumerate() {
+            println!("option {}: voice {sid} speed {speed}", i + 1);
+            s.enqueue(&s.synth_with(&format!("Option {}. Good evening. I've opened Notes. Is there anything else you need?", i + 1), sid, speed));
+            std::thread::sleep(UNTIL.lock().unwrap().unwrap().saturating_duration_since(Instant::now()) + Duration::from_millis(700));
+        }
     }
 
     /// Needs the models from scripts/fetch-models.sh. Prints synthesis time vs audio length.

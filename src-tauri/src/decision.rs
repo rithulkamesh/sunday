@@ -135,7 +135,11 @@ fn computer_task(text: &str) -> Option<String> {
             rest = r.to_string();
         }
     }
-    ["open ", "click ", "select ", "launch ", "go to ", "type ", "navigate to ", "pull up ", "bring up "].iter().any(|v| rest.starts_with(v)).then(|| t.to_string())
+    // "show me YouTube videos on...", "play some jazz", "watch a talk on...": a request to open something, not a question.
+    // "show me how a mutex works" is still conversation, so "show me / find me / search" need a place or kind of media.
+    let media = ["youtube", "video", "image", "picture", "photo", "website", "google", "spotify"];
+    let show = ["show me ", "find me ", "search "].iter().any(|v| rest.starts_with(v)) && media.iter().any(|m| rest.contains(m));
+    (show || ["open ", "click ", "select ", "launch ", "go to ", "type ", "navigate to ", "pull up ", "bring up ", "play ", "watch "].iter().any(|v| rest.starts_with(v))).then(|| t.to_string())
 }
 
 /// Refuses actions that can't run right now; the caller falls back to `Chat` with an explanation.
@@ -213,6 +217,11 @@ mod tests {
         assert_eq!(d("Can you open Safari?", false), Do("Can you open Safari".into()));
         assert_eq!(d("open question: what is a mutex", false), Do("open question: what is a mutex".into())); // ponytail: verb rule, the model's plan will just finish
         assert_eq!(d("what does open mean", false), Chat);
+        assert!(matches!(d("Sunday can you show me YouTube videos on machine learning?", false), Do(_)));
+        assert!(matches!(d("play some jazz on spotify", false), Do(_)));
+        assert!(matches!(d("search youtube for rust tutorials", false), Do(_)));
+        assert_eq!(d("show me how a mutex works", false), Chat);
+        assert_eq!(d("find me a better word for happy", false), Chat);
         assert!(matches!(d("Sandey, can you open one with three colours?", false), Do(_)));
         assert!(matches!(d("click on the blue one", false), Do(_)));
         assert_eq!(d("Sunday, remember that my driving test is on 8 February.", false), Remember("my driving test is on 8 February".into()));
