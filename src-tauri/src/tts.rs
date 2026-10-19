@@ -73,6 +73,7 @@ pub fn epoch() -> u64 {
 
 /// Barge-in: silence playback now and cancel everything stamped before this call.
 pub fn interrupt() {
+    eprintln!("[tts] interrupt");
     EPOCH.fetch_add(1, Ordering::SeqCst);
     QUEUE.lock().unwrap().clear();
     *UNTIL.lock().unwrap() = None;
@@ -169,10 +170,10 @@ impl Speaker {
     /// Queues the audio unless an interrupt happened since `epoch`. False if dropped.
     pub fn speak(&self, text: &str, epoch: u64) -> bool {
         let audio = self.synth(text);
-        if epoch != self::epoch() {
+        if !self.enqueue_if(&audio, epoch) {
+            eprintln!("[tts] dropped a sentence: interrupted while it was being made");
             return false;
         }
-        self.enqueue(&audio);
         let mut said = SAID.lock().unwrap();
         said.push_str(text);
         said.push(' ');
@@ -181,6 +182,20 @@ impl Speaker {
             let cut = (cut..said.len()).find(|i| said.is_char_boundary(*i)).unwrap_or(0);
             said.drain(..cut);
         }
+        true
+    }
+
+    /// Queues the audio only if no interrupt has happened since `epoch`. The check and the push happen under the same locks
+    /// `interrupt` takes to clear the queue, so a barge-in can't slip between them and leave stale audio playing.
+    fn enqueue_if(&self, samples: &[f32], epoch: u64) -> bool {
+        let secs = samples.len() as f64 / self.tts.sample_rate() as f64;
+        let mut until = UNTIL.lock().unwrap();
+        let mut queue = QUEUE.lock().unwrap();
+        if epoch != self::epoch() {
+            return false;
+        }
+        *until = Some(until.filter(|t| *t > Instant::now()).unwrap_or_else(Instant::now) + Duration::from_secs_f64(secs));
+        queue.extend(samples);
         true
     }
 

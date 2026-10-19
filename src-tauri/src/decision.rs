@@ -131,7 +131,7 @@ fn computer_task(text: &str) -> Option<String> {
         }
     }
     rest = rest.replace(',', "");
-    for lead in ["sunday ", "uh ", "um ", "so ", "please ", "can you ", "could you ", "would you ", "i want you to ", "go ahead and "] {
+    for lead in ["sunday ", "uh ", "um ", "so ", "i said ", "i meant ", "i mean ", "no ", "actually ", "now ", "then ", "and ", "just ", "please ", "can you ", "could you ", "would you ", "i want you to ", "go ahead and "] {
         while let Some(r) = rest.strip_prefix(lead) {
             rest = r.to_string();
         }
@@ -222,6 +222,8 @@ mod tests {
         assert!(matches!(d("play some jazz on spotify", false), Do(_)));
         assert!(matches!(d("Uh can you sort by the best videos?", false), Do(_)), "a follow-up on what is on screen is an action");
         assert!(matches!(d("scroll down a bit", false), Do(_)));
+        assert!(matches!(d("I said can you sort by the best?", false), Do(_)), "a repeated command is still a command");
+        assert!(matches!(d("no, open Notes", false), Do(_)));
         assert!(matches!(d("sunday, um, go back", false), Do(_)));
         assert_eq!(d("what does sort mean", false), Chat);
         assert!(matches!(d("search youtube for rust tutorials", false), Do(_)));
