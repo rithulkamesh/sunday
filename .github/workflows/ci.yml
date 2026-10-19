@@ -4,6 +4,15 @@ on:
     branches: [main]
   pull_request:
 
+# A new push to a PR cancels the run it replaces.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # No debug info: smaller objects, faster links, and a cache about a third smaller to restore and save.
+  CARGO_PROFILE_DEV_DEBUG: 0
+
 jobs:
   rust:
     strategy:
@@ -11,6 +20,7 @@ jobs:
       matrix:
         os: [macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     # macOS only until the platform layer (#21) lands; add windows-latest and ubuntu-latest back then.
     steps:
       - uses: actions/checkout@v4
@@ -20,14 +30,18 @@ jobs:
           workspaces: src-tauri
           # A cache from before MLX can hold a stale link path to sherpa-onnx's prebuilt libraries (rust-cache prunes
           # that directory), which fails the build. Bump this if it ever happens again.
-          prefix-key: v1-rust
-      # Other tests need Ollama, so run the deterministic ones by name.
-      - name: Tests (no model needed)
+          prefix-key: v2-rust
+          # A cold build is ~13 minutes: keep it even if a test fails, so the retry is fast.
+          cache-on-failure: true
+      # Everything not marked #[ignore]. Tests that need Ollama, models, the screen or the live web are ignored
+      # (see `bun run test:live`), so a new test is picked up here without editing this file.
+      - name: Tests
         working-directory: src-tauri
-        run: cargo test --bin sunday -- eval_suite splits_sentences context_goes json_retries unsafe_steps yes_and_no conformance
+        run: cargo test --bin sunday
 
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2

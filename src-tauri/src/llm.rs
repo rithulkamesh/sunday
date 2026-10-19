@@ -670,6 +670,7 @@ mod tests {
 
     /// Needs Ollama running with the model pulled: the quiz and grading JSON must parse.
     #[test]
+    #[ignore = "needs Ollama running with the models from scripts/fetch-models.sh"]
     fn model_returns_valid_learning_json() {
         let m = std::env::var("SUNDAY_MODEL").unwrap_or_else(|_| MODEL.into());
         let t = std::time::Instant::now();
@@ -684,6 +685,7 @@ mod tests {
 
     /// Needs Ollama: each built-in skill must pass its own tests, which is the bar for approval.
     #[test]
+    #[ignore = "needs Ollama running with the models from scripts/fetch-models.sh"]
     fn builtin_skills_pass_their_tests() {
         let db = Db::open(&std::env::temp_dir().join(format!("sunday-test-{}.db", std::process::id()))).unwrap();
         let model = model_name(&db);
@@ -701,10 +703,8 @@ mod tests {
     /// Needs network, Chrome-or-not, and Ollama: the whole "research" path minus the window.
     /// search -> read pages in parallel -> snippets -> answer from them with sources.
     #[test]
+    #[ignore = "needs Ollama running with the models from scripts/fetch-models.sh and SUNDAY_WEB_TEST=1 (live web)"]
     fn researches_a_question_from_the_web() {
-        if std::env::var("SUNDAY_WEB_TEST").is_err() {
-            return;
-        }
         let q = "what is the banker's algorithm in operating systems";
         let t0 = std::time::Instant::now();
         let hits = crate::web::search(q, 5).expect("search");
@@ -728,10 +728,8 @@ mod tests {
 
     /// Where a spoken turn's time goes after the words are known. Run with SUNDAY_BENCH=1 --nocapture.
     #[test]
+    #[ignore = "needs Ollama running with the models from scripts/fetch-models.sh; a benchmark"]
     fn bench_reply_path() {
-        if std::env::var("SUNDAY_BENCH").is_err() {
-            return;
-        }
         let ms = |t: std::time::Instant| t.elapsed().as_secs_f32() * 1000.0;
         let db = Db::open(&std::env::temp_dir().join(format!("sunday-bench-{}.db", std::process::id()))).unwrap();
         // 1500 facts with random 768-d embeddings, to time recall's own cost without needing Ollama for 1500 embeddings.
@@ -782,6 +780,7 @@ mod tests {
 
     /// Needs Ollama: a usable learning plan for subjects that have nothing in common.
     #[test]
+    #[ignore = "needs Ollama running with the models from scripts/fetch-models.sh"]
     fn plans_for_any_subject() {
         let model = std::env::var("SUNDAY_MODEL").unwrap_or_else(|_| MODEL.into());
         for topic in ["beginner guitar", "linear algebra", "baking sourdough bread", "the Rust borrow checker", "conversational Spanish"] {

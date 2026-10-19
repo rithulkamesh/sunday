@@ -300,10 +300,8 @@ mod tests {
 
     /// Needs the network (and Chrome for the last part); run by hand with SUNDAY_WEB_TEST=1.
     #[test]
+    #[ignore = "needs the live web"]
     fn reads_real_pages() {
-        if std::env::var("SUNDAY_WEB_TEST").is_err() {
-            return;
-        }
         let p = fetch("https://en.wikipedia.org/wiki/Deadlock_(computer_science)").expect("static page");
         println!("static: {:?} rendered={} {} chars: {}", p.title, p.rendered, p.text.len(), &p.text[..200.min(p.text.len())]);
         assert!(!p.rendered && p.text.len() > 1000);
