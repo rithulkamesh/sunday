@@ -233,6 +233,7 @@ mod tests {
 
     /// Needs the models from scripts/fetch-models.sh. Prints synthesis time vs audio length.
     #[test]
+    #[ignore = "needs the speech models from scripts/fetch-models.sh; a benchmark"]
     fn synthesis_speed() {
         let s = Speaker::new().expect("tts unavailable");
         for text in ["Hello there.", "I can answer questions, write different kinds of creative text, and help you with information.", "Just let me know what you need."] {

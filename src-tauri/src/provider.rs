@@ -657,10 +657,8 @@ mod conformance {
 
     /// Real provider, real network. Costs tokens on remote providers.
     #[test]
+    #[ignore = "needs a real provider (SUNDAY_PROVIDER_TEST=1)"]
     fn live() {
-        if std::env::var("SUNDAY_PROVIDER_TEST").is_err() {
-            return;
-        }
         let model = std::env::var("SUNDAY_MODEL").unwrap_or_else(|_| crate::llm::MODEL.into());
         let msgs = [json!({"role": "user", "content": "Say hello in one word."})];
         let p = current();

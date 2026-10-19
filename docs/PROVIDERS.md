@@ -71,7 +71,7 @@ Sunday sends short prompts with a few retrieved notes, and the planner makes up 
 
 ```sh
 SUNDAY_PROVIDER=openai OPENAI_BASE_URL=http://localhost:11434/v1 SUNDAY_PROVIDER_TEST=1 \
-  cargo test conformance::live -- --nocapture
+  cargo test conformance::live -- --ignored --nocapture
 ```
 
 This runs a real request and a real stream against the chosen provider. The same checks run in CI for every provider against a local mock server.

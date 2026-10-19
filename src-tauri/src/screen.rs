@@ -735,10 +735,8 @@ mod tests {
     /// Needs the vision model and screen-recording permission; run by hand with SUNDAY_SCREEN_TEST=1.
     /// With SUNDAY_TEST_IMAGE=<file> it analyses that picture instead of the screen (e.g. a diagram).
     #[test]
+    #[ignore = "needs the vision model and screen-recording permission"]
     fn looks_at_the_real_screen() {
-        if std::env::var("SUNDAY_SCREEN_TEST").is_err() {
-            return;
-        }
         let model = std::env::var("SUNDAY_VISION").unwrap_or_else(|_| llm::VISION.into());
         let text_model = std::env::var("SUNDAY_MODEL").unwrap_or_else(|_| llm::MODEL.into());
         let task = std::env::var("SUNDAY_TEST_TASK").unwrap_or_else(|_| "What is on my screen? Point at the most important thing.".into());
