@@ -36,6 +36,11 @@ pub trait Platform: Send + Sync {
     fn screenshot(&self, path: &Path) -> Res<()>;
     /// Whether screen capture is allowed (asks once where the OS has a prompt).
     fn screen_access(&self) -> bool;
+    /// Whether typing and clicking are allowed. Where the OS gates them, a refusal also opens the page where the user
+    /// turns it on.
+    fn input_access(&self) -> bool {
+        true
+    }
     /// Display size, the front app, and the windows open (front to back). None if the OS can't say.
     fn desk(&self) -> Option<Desk>;
     fn frontmost_app(&self) -> Option<String> {

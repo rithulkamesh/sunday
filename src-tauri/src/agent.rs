@@ -84,6 +84,9 @@ pub struct State {
     /// Failed or unverified steps in a row; any success resets it.
     #[serde(default)]
     pub fails: u8,
+    /// A reason to stop right now (a missing permission): retrying can't fix it, so the task ends saying so.
+    #[serde(default)]
+    pub stop: Option<String>,
     /// The step waiting for a yes.
     pub waiting: Option<Step>,
 }
@@ -251,6 +254,9 @@ fn prompt(st: &State) -> String {
 pub fn drive(db: &Db, st: &mut State, plan: &dyn Fn(&State) -> Res<Step>, eyes: &Eyes) -> Res<Out> {
     let t0 = std::time::Instant::now();
     loop {
+        if let Some(why) = st.stop.take() {
+            return Ok(finish(db, st, &why));
+        }
         if st.fails >= MAX_FAILS {
             let why = st.log.last().cloned().unwrap_or_default();
             return Ok(finish(db, st, &format!("I couldn't get this to work after {MAX_FAILS} tries. The last thing that went wrong: {}", why.trim_start_matches("- "))));
@@ -275,6 +281,10 @@ pub fn drive(db: &Db, st: &mut State, plan: &dyn Fn(&State) -> Res<Step>, eyes: 
             st.log.push(format!("- {} failed: {e}", s.tool));
             st.fails += 1;
             continue;
+        }
+        // Asked before the user is, so a yes is never wasted on a step the OS will refuse.
+        if matches!(s.tool.as_str(), "type_text" | "click") && !crate::platform::current().input_access() {
+            return Ok(finish(db, st, "I need Accessibility permission to type and click. I've opened System Settings: turn on Sunday (or the terminal you started it from), then ask me again."));
         }
         if s.tool == "click" {
             // Find the spot first: the user is shown it and asked before anything is clicked.
@@ -375,6 +385,9 @@ fn observe(db: &Db, st: &mut State, s: &Step, eyes: &Eyes, how: &str) {
         Err(e) => {
             // A step that didn't work isn't "done": the planner may try it again, differently.
             st.fails += 1;
+            if e.starts_with("I need ") {
+                st.stop = Some(e.clone());
+            }
             st.done.retain(|k| *k != key(s));
             format!("failed or NOT verified: {e}")
         }
@@ -540,6 +553,16 @@ mod tests {
 
     fn temp_db(name: &str) -> Db {
         Db::open(&std::env::temp_dir().join(format!("sunday-{name}-{}.db", std::process::id()))).unwrap()
+    }
+
+    #[test]
+    fn a_missing_permission_ends_the_task_without_asking_the_model_again() {
+        let db = temp_db("perm");
+        let (look, locate) = (|_: &str| Ok(String::new()), |_: &str| Ok((1.0, 1.0)));
+        let eyes = Eyes { look: &look, locate: &locate };
+        let plan = |_: &State| -> Res<Step> { panic!("the planner must not be asked") };
+        let mut state = State { task: "t".into(), stop: Some("I need permission.".into()), ..State::default() };
+        assert!(matches!(drive(&db, &mut state, &plan, &eyes).unwrap(), Out::Done(t) if t == "I need permission."));
     }
 
     #[test]
