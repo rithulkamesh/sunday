@@ -87,11 +87,11 @@ pub fn speaking() -> bool {
     UNTIL.lock().unwrap().is_some_and(|t| Instant::now() < t + TAIL)
 }
 
-/// Sunday's voice: a speaker id in kokoro-en-v0_19. 7 is bf_emma (British, female), 8 bf_isabella (British, female);
+/// Sunday's voice: a speaker id in kokoro-en-v0_19. 8 is bf_isabella (British, female), 7 bf_emma (also British, female);
 /// 0..=4 are American women, 5..=6 American men, 9..=10 British men.
-pub const VOICE: i32 = 7;
+pub const VOICE: i32 = 8;
 /// Kokoro's default pace sounds flat and bored; a little quicker is livelier.
-pub const SPEED: f32 = 1.12;
+pub const SPEED: f32 = 1.25;
 
 /// The voice and pace. SUNDAY_VOICE and SUNDAY_VOICE_SPEED try others without a rebuild.
 fn voice() -> (i32, f32) {
