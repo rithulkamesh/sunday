@@ -14,6 +14,21 @@ If the number moves, the harness is doing real work. If it doesn't, we learn tha
 
 Track progress in the [v1 master issue](https://github.com/rithulkamesh/sunday/issues/31). Docs: [sunday.rithul.dev](https://sunday.rithul.dev).
 
+## How it fits together
+
+```mermaid
+flowchart LR
+    in["Voice, typing,<br/>screen"] --> route["Router<br/>one typed Action"]
+    route --> talk["Teach, chat,<br/>research, memory"]
+    route --> agent["Agent loop<br/>plan, act, verify"]
+    agent --> os["Your computer<br/>behind approvals"]
+    talk --> model["Swappable model<br/>Ollama, MLX, hosted"]
+    agent --> model
+    os --> log[("Audit log")]
+```
+
+Every box is a module with a test; the [architecture page](docs/ARCHITECTURE.md) has the loop, the approval tiers and the data model in detail.
+
 ## Where it is today
 
 Honest status. This is early software, macOS only, and runs on a 4B local model by default.
@@ -23,22 +38,23 @@ Honest status. This is early software, macOS only, and runs on a 4B local model 
 | **Sees** | Screenshot, local OCR with exact boxes, vision model for diagrams, click-through overlay that points at things |
 | **Understands** | Teaches any subject (plans, concepts, quizzes, spaced review), imports your notes |
 | **Notices** | Wake word, voice activation, your voiceprint, long-term memory with provenance |
-| **Decides** | Every utterance becomes one typed `Action`; deterministic rules router with a seam for a smarter one |
-| **Acts** | Open apps, pages and files, type, click with a preview, all behind approvals and an audit log |
-| **Yours** | Local models via Ollama, SQLite on disk, web access off unless you switch it on |
+| **Decides** | Every utterance becomes one typed `Action`; a deterministic rules router with a fine-tuned decision model behind the same trait |
+| **Acts** | Opens apps, pages and files, types, presses shortcuts, clicks. Checks each step really happened, retries what didn't, and stops honestly. All behind tiered approvals and an audit log |
+| **Yours** | Ollama, MLX on this Mac, or a hosted model for chat or planning; SQLite on disk; web access off unless you switch it on |
+| **Measured** | An eval suite with a sandbox, routing and agent tasks, and a prompt-injection red team, run on every PR |
 
 What each of these does in detail: [docs/FEATURES.md](docs/FEATURES.md).
 
 ## What's next (v1)
 
-1. **Measure**: an eval harness and a 50-task suite. Nothing else counts until this exists.
-2. **Agent loop**: persistent tasks, plan → act → observe → verify → replan.
-3. **Memory that compounds**: successful runs become reusable skills, gated by the evals.
-4. **Any model**: Ollama today; Amazon Nova / Bedrock, Anthropic, OpenAI-compatible, Gemini and llama.cpp next, behind one provider trait.
-5. **Extensible**: MCP tools, a plugin/tool SDK, custom skills and routers.
-6. **Everywhere**: Windows and Linux (macOS only today).
+1. **Measure**: grow the eval suite to 50 tasks and track the pass rate every night.
+2. **Agent loop**: persistent tasks that survive restarts (the loop and verifiers are in review).
+3. **Tools**: MCP, a sandboxed shell, a browser driver.
+4. **Memory that compounds**: successful runs become reusable skills, gated by the evals.
+5. **Self-improvement**: failure analysis and a promotion gate; the router already learns from corrections.
+6. **Everywhere**: Windows and Linux.
 
-Everything is a labelled issue. Browse [`roadmap`](https://github.com/rithulkamesh/sunday/labels/roadmap).
+The full list, with status, is the [roadmap](docs/ROADMAP.md). Everything is a labelled issue: browse [`roadmap`](https://github.com/rithulkamesh/sunday/labels/roadmap).
 
 ## Quick start
 
@@ -50,13 +66,20 @@ ollama pull qwen3-vl:4b-instruct   # only for diagrams and non-text screens
 bun install && bun run tauri dev
 ```
 
+Check it with `cd src-tauri && cargo test` (about a second, needs nothing installed) and `bun run test:live` for the tests that need Ollama and the models.
+
 Say "sunday" or hold fn, then talk, or type in the workspace. Full walkthrough and troubleshooting: [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
 
 ## Docs
 
 - [Getting started](docs/GETTING_STARTED.md): install, first run, things to try, where to begin hacking
-- [What's in the repo](docs/REPO_MAP.md): every module, the data flow, the database tables
+- [Architecture](docs/ARCHITECTURE.md): the agent loop, approvals, routing, platform layer and data model, as diagrams
+- [Roadmap](docs/ROADMAP.md): what shipped, what is in review, what is next
 - [Features](docs/FEATURES.md): what exists and how it behaves
+- [Providers](docs/PROVIDERS.md): Ollama, MLX and hosted models, keys and privacy
+- [Router](docs/ROUTER.md): how an utterance becomes an action, and how that gets smarter
+- [What's in the repo](docs/REPO_MAP.md): every module, the data flow, the database tables
+- [Testing](docs/TESTING.md) and [Evals](docs/EVALS.md): hermetic tests, live tests, the eval suite and CI
 - [Contributing](CONTRIBUTING.md): the issue-to-PR flow, safety rules, working with AI coding agents
 
 ## Help build it

@@ -6,7 +6,7 @@ title: Features
 
 # Features (what exists today)
 
-Moved from the README. Everything below is implemented and macOS-only for now (see [roadmap](https://github.com/rithulkamesh/sunday/issues/31)).
+Everything below is implemented and macOS-only for now. What is planned is on the [roadmap](ROADMAP.md).
 
 
 **Teaching anything.** "Teach me how to play guitar", "I want to learn linear algebra", "teach me Spanish". The first time, the model drafts a learning plan
@@ -38,14 +38,23 @@ When you say goodbye, lasting facts about you are saved as unconfirmed guesses. 
 Lifecycle: proposed → experimental → approved; approval needs a passing test run on that version; any approved version can be rolled back.
 Describe one in the Skills view and the model drafts it. Voice: "run skill learn.mnemonic on the OSI model".
 
-**Acting.** "Open Spotify", "pull up images of a keyboard", "go to github.com", "type …". The model picks one typed step at a time (`agent.rs`): open an app, open a page (in the browser you already have open), open a file in your home folder, type into the front app, web search, look at the screen, recall. Every tool has a tier in one table (`POLICY`): reading (web search, look at screen, recall) runs freely; opening an app or page is reversible and just happens when you asked for it directly; typing, clicking and opening files always ask "…?" and wait for a yes; and once the task has read anything from the web, the screen or memory, even opening an app or page asks (read content is data, never a command). A tool that isn't in the table always asks. Hidden folders, non-http addresses and anything outside your home folder are refused. Every step is logged in the `actions` table with its tier and whether it ran on its own or you approved it. Typing needs Accessibility permission.
+**Acting.** "Open Spotify", "pull up images of a keyboard", "show me YouTube videos on machine learning", "open Notes and type hello", "go to github.com". The model picks one typed step at a time (`agent.rs`): open an app, open a page (in the browser you already have open), open a file in your home folder, type into the front app, press a shortcut like cmd+n, click, search the web, look at the screen, recall. It can chain several apps in one request, and a follow-up like "sort by the best" or "scroll down" continues what is on screen. [The loop](ARCHITECTURE.md#the-agent-loop):
 
-**Decisions.** Every utterance becomes one typed `Action` (`decision.rs`) before anything runs, and is checked against what's
-permitted. `Rules` is the deterministic router; the `Decider` trait is where a smarter router goes.
+- **It checks its own work.** After each step Sunday looks at the real state: did the app come to the front, is the browser on that site, is the typed text on screen. A step that did not work is not treated as done: the planner is told it failed and tries something different. Three failures in a row, 12 steps or two minutes end the task with an honest message instead of a false "Done".
+- **Approvals by tier** (one table, `POLICY`). Reading (web search, look at screen, recall) runs freely. Opening an app or page is reversible and just happens when you asked for it directly. Typing, clicking, shortcuts and opening files ask "…?" and wait for a yes, with two exceptions that are safe by construction: typing the words you said in your own request into the app the task just opened, and the shortcuts new note, save, new tab, find and address bar (cmd+n, s, t, f, l). Once the task has read anything from the web, the screen or memory, even opening an app asks (read content is data, never a command). A tool that isn't in the table always asks.
+- **Guard rails.** Hidden folders, non-http addresses and anything outside your home folder are refused. Every step is logged in the `actions` table with its tier and whether it ran on its own or you approved it.
+- **Permissions on first use.** Typing and clicking need Accessibility. If it is missing, Sunday opens the right page in System Settings and says what to turn on, instead of retrying.
+- **Honest chat.** A conversational reply never claims it opened, clicked, played or typed something: only the agent acts, and a reply that says otherwise is replaced with "I haven't done that. Ask me directly."
+
+**Decisions.** Every utterance becomes one typed `Action` (`decision.rs`) before anything runs, and is checked against what's permitted. `Rules` is the deterministic router and always the fallback; short corrections and fillers ("uh", "I said…", "no, …") don't hide a command, and a follow-up such as "tell me more" after a screen answer can be routed by meaning with the [fine-tuned router](ROUTER.md).
 
 **⌘K** command palette; **Settings** has the model picker and a diagnostics checklist.
 
 **Your voice.** "Learn my voice" (say it, or Settings / ⌘K) records ~20 s of you, builds a voiceprint (wespeaker ResNet34, on-device) and from then on Sunday ignores other voices: wake word, commands and talking-over-it all have to match you. The fn key always works. Logs show `voice match 0.xx` so the threshold (`speaker::SAME`) can be tuned. "Forget my voice" removes it.
 
-Voice details: "Sunday" or fn wakes it; say "stop", talk over it, or press fn to interrupt; "bye" ends the session and unloads the speech model.
+Voice details: "Sunday" or fn wakes it; say "stop", talk over it, or press fn to interrupt; "bye" ends the session and unloads the speech model. Talking over Sunday cancels everything it had queued, including a sentence that was still being made. Replies are short and spoken the way a person would say them: "Done." after a command, more only when there is something to tell.
+
+**The voice.** Kokoro, on this Mac. The default is the American voice 0 at normal pace. Try others without a rebuild with `SUNDAY_VOICE` (a speaker id from `kokoro-en-v0_19`: 0 to 4 American women, 5 and 6 American men, 7 and 8 British women, 9 and 10 British men) and `SUNDAY_VOICE_SPEED` (1.0 is normal). `cargo test speaks_aloud -- --ignored --nocapture` plays the same sentence in several voices so you can pick by ear.
+
+**Models.** Ollama by default, or MLX on this Mac with no Ollama, or a hosted model (OpenAI-compatible, Anthropic, Gemini, Amazon Nova) for chat or for planning only. Memory search can run on the device too. See [Providers](PROVIDERS.md).
 
