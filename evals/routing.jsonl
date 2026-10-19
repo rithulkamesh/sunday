@@ -18,3 +18,4 @@
 {"id":"skill-run","say":"run skill summarize on the meeting notes","expect":"Skill { id: \"summarize\", input: \"the meeting notes\" }"}
 {"id":"do-show-youtube","say":"Sunday can you show me YouTube videos on machine learning?","expect":"Do(\"Sunday can you show me YouTube videos on machine learning\")"}
 {"id":"chat-show-me-how","say":"show me how a mutex works","expect":"Chat"}
+{"id":"do-followup-sort","say":"Uh can you sort by the best videos?","expect":"Do(\"Uh can you sort by the best videos\")"}

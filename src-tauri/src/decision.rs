@@ -130,7 +130,8 @@ fn computer_task(text: &str) -> Option<String> {
             rest = after.to_string();
         }
     }
-    for lead in ["sunday ", "please ", "can you ", "could you ", "would you ", "i want you to ", "go ahead and "] {
+    rest = rest.replace(',', "");
+    for lead in ["sunday ", "uh ", "um ", "so ", "please ", "can you ", "could you ", "would you ", "i want you to ", "go ahead and "] {
         while let Some(r) = rest.strip_prefix(lead) {
             rest = r.to_string();
         }
@@ -139,7 +140,7 @@ fn computer_task(text: &str) -> Option<String> {
     // "show me how a mutex works" is still conversation, so "show me / find me / search" need a place or kind of media.
     let media = ["youtube", "video", "image", "picture", "photo", "website", "google", "spotify"];
     let show = ["show me ", "find me ", "search "].iter().any(|v| rest.starts_with(v)) && media.iter().any(|m| rest.contains(m));
-    (show || ["open ", "click ", "select ", "launch ", "go to ", "type ", "navigate to ", "pull up ", "bring up ", "play ", "watch "].iter().any(|v| rest.starts_with(v))).then(|| t.to_string())
+    (show || ["open ", "click ", "select ", "launch ", "go to ", "type ", "navigate to ", "pull up ", "bring up ", "play ", "watch ", "sort ", "filter ", "scroll ", "switch to ", "go back", "refresh", "reload", "pause "].iter().any(|v| rest.starts_with(v))).then(|| t.to_string())
 }
 
 /// Refuses actions that can't run right now; the caller falls back to `Chat` with an explanation.
@@ -219,6 +220,10 @@ mod tests {
         assert_eq!(d("what does open mean", false), Chat);
         assert!(matches!(d("Sunday can you show me YouTube videos on machine learning?", false), Do(_)));
         assert!(matches!(d("play some jazz on spotify", false), Do(_)));
+        assert!(matches!(d("Uh can you sort by the best videos?", false), Do(_)), "a follow-up on what is on screen is an action");
+        assert!(matches!(d("scroll down a bit", false), Do(_)));
+        assert!(matches!(d("sunday, um, go back", false), Do(_)));
+        assert_eq!(d("what does sort mean", false), Chat);
         assert!(matches!(d("search youtube for rust tutorials", false), Do(_)));
         assert_eq!(d("show me how a mutex works", false), Chat);
         assert_eq!(d("find me a better word for happy", false), Chat);

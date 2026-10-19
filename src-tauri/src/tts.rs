@@ -155,6 +155,7 @@ impl Speaker {
     }
 
     /// Same, in another of the model's voices (speaker id).
+    #[cfg(test)]
     pub fn synth_sid(&self, text: &str, sid: i32) -> Vec<f32> {
         self.synth_with(text, sid, 1.0)
     }
