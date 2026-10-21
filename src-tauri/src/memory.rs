@@ -43,7 +43,7 @@ pub fn embed_model() -> String {
 }
 
 /// Similarity of two embeddings. Vectors from different models have different lengths and mean nothing together.
-fn sim(a: &[f32], b: &[f32]) -> f32 {
+pub(crate) fn sim(a: &[f32], b: &[f32]) -> f32 {
     if a.len() == b.len() { cosine(a, b) } else { 0.0 }
 }
 

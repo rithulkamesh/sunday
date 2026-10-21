@@ -88,6 +88,7 @@ fn warm_up(model: String) {
         let chat = provider::current();
         chat.warm(&model);
         let _ = crate::memory::embed(&["warm up".to_string()], true);
+        crate::laya::warm();
         eprintln!("[perf] {} and embedding models warmed up in {:?}", chat.name(), t.elapsed());
     });
 }
@@ -180,7 +181,25 @@ fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
             crate::agent::Reply::Other => crate::agent::cancel(c.db, &st),
         }
     }
-    let action = decision::Rules.decide(q, pending.is_some());
+    let mut action = decision::Rules.decide(q, pending.is_some());
+    let last = c.db.kv_get("last_route").filter(|l| !l.is_empty());
+    // No pattern matched. First what the user has corrected before, then the routing model if it is installed (laya.rs).
+    if action == Action::Chat && pending.is_none() {
+        let reply = history.iter().rev().find(|m| m["role"] == "assistant").and_then(|m| m["content"].as_str()).unwrap_or("");
+        let routed = crate::corrections::recall(c.db, last.as_deref().unwrap_or(""), q).or_else(|| crate::laya::route(last.as_deref(), reply, q).map(|r| r.name().to_string()));
+        if let Some(a) = routed.and_then(|r| crate::laya::action_for(&r, q)) {
+            action = a;
+        }
+    }
+    let kind = match &action {
+        Action::Do(_) => "do",
+        Action::Screen(_) => "screen",
+        Action::Research(_) => "research",
+        Action::Chat => "chat",
+        _ => "other", // teaching, quizzes, notes...
+    };
+    crate::corrections::observe(c.db, q, last.as_deref().unwrap_or(""), kind);
+    c.db.kv_set("last_route", if kind == "other" { "chat" } else { kind });
     let web_on = c.db.kv_get("web").as_deref() == Some("on");
     if let Err(why) = decision::permitted(&action, |id| c.db.skill(id, None).is_some(), web_on) {
         return Ok(say(c, &why));

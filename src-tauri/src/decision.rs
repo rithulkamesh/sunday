@@ -87,6 +87,10 @@ impl Decider for Rules {
             return Action::ClearScreen;
         }
         if has(&[" my screen ", " this screen ", " on screen ", " on the screen ", " what i'm looking at ", " what im looking at ", " this page ", " this problem ", " this question ", " explain this ", " what is this ", " what's this ", " point to ", " point at ", " draw on "]) {
+            // "sort what is on my screen by the best": the screen is where the command applies, not the question.
+            if let Some(task) = computer_task(text).filter(|_| has(&[" on my screen ", " on the screen ", " on screen "])) {
+                return Action::Do(task);
+            }
             return Action::Screen(fix_heard(text.trim()));
         }
         for lead in [" run skill ", " use skill ", " use the skill "] {
@@ -222,6 +226,9 @@ mod tests {
         assert!(matches!(d("play some jazz on spotify", false), Do(_)));
         assert!(matches!(d("Uh can you sort by the best videos?", false), Do(_)), "a follow-up on what is on screen is an action");
         assert!(matches!(d("scroll down a bit", false), Do(_)));
+        assert!(matches!(d("Sandhi, can you sort what is on my screen by the best?", false), Do(_)), "a command applied to what is on screen acts");
+        assert!(matches!(d("click the button on my screen", false), Do(_)));
+        assert!(matches!(d("explain what is on my screen", false), Screen(_)), "no operating verb: still a question about the screen");
         assert!(matches!(d("I said can you sort by the best?", false), Do(_)), "a repeated command is still a command");
         assert!(matches!(d("no, open Notes", false), Do(_)));
         assert!(matches!(d("sunday, um, go back", false), Do(_)));
@@ -256,5 +263,41 @@ mod tests {
         assert!(permitted(&LearnPage(None), known, false).is_err());
         assert!(permitted(&Research("deadlock".into()), known, true).is_ok());
         assert!(permitted(&Remember("x".into()), known, false).is_err());
+    }
+}
+
+#[cfg(test)]
+mod held_out {
+    use super::*;
+
+    /// How `Rules` alone does on the router's held-out cases (`evals/router`), the number a learned router has to beat.
+    /// Rules sees only the words, so a follow-up that depends on the last turn is out of its reach by design.
+    /// `real.jsonl` is the maintainer's own transcripts and isn't in git; without it only the shared cases run.
+    #[test]
+    fn rules_baseline() {
+        let route = |a: Action| match a {
+            Action::Do(_) => "do",
+            Action::Screen(_) => "screen",
+            Action::Research(_) => "research",
+            _ => "chat",
+        };
+        for name in ["proto", "real"] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../evals/router/{name}.jsonl"));
+            let Ok(text) = std::fs::read_to_string(path) else { continue };
+            let (mut ok, mut n, mut false_actions) = (0, 0, 0);
+            for line in text.lines().filter(|l| !l.trim().is_empty()) {
+                let v: serde_json::Value = serde_json::from_str(line).unwrap();
+                let (said, want) = (v["text"].as_str().unwrap(), v["label"].as_str().unwrap());
+                let got = route(Rules.decide(said, false));
+                n += 1;
+                ok += (got == want) as usize;
+                false_actions += (want == "chat" && got != "chat") as usize;
+                if got != want {
+                    println!("  {name}: rules said {got}, wanted {want}: {said}");
+                }
+            }
+            println!("rules on {name}: {ok}/{n} right, {false_actions} conversations wrongly sent to an action");
+            assert_eq!(false_actions, 0, "{name}: Rules must never turn conversation into an action");
+        }
     }
 }

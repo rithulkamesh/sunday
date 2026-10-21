@@ -1,0 +1,12 @@
+{
+  "route": {
+    "type": "choice",
+    "instructions": "What should the assistant do with the user's latest message?",
+    "criteria": {
+      "chat": "talk: greetings, explain a concept, answer from knowledge, opinions, thanks",
+      "screen": "look at or explain what is on the user's screen, or ask for more about what was just described",
+      "do": "act on the computer: open or switch apps, open a page or video, search a site, type, click, scroll, sort or filter what is open",
+      "research": "look something up on the web and report back"
+    }
+  }
+}

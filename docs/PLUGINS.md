@@ -25,4 +25,6 @@ Sunday is meant to be extended without forking it. The pieces, each tracked as a
 - A plugin can't edit the permission layer.
 - Any network call a plugin makes is off until the user turns it on.
 
-Want to help? Pick one of the issues above and read [Working with agents](AGENTS.md).
+A new tool today means a row in `POLICY` (its tier), a check, a verifier if its result can be checked, and a test; see [Architecture](ARCHITECTURE.md#the-agent-loop). The SDK will turn that into something you can do without editing `agent.rs`.
+
+Want to help? Pick one of the issues above and read [Working with agents](AGENTS.md). The whole plan is on the [roadmap](ROADMAP.md).

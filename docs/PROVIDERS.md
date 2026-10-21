@@ -16,7 +16,7 @@ A provider is where a model call goes. Sunday runs on **Ollama** by default, so 
 | Planner | Picks the next step when Sunday acts on your computer | any, follows Chat until you set it |
 | Vision | Reads diagrams and non-text screens | Ollama only |
 | Embeddings | Memory and note search | Ollama, or on this Mac (all-MiniLM-L6-v2, no Ollama) |
-| Router | Decides what an utterance means | built-in rules, no model |
+| Router | Decides what an utterance means | built-in rules, no model; optionally a small on-device decision model ([Router](ROUTER.md)) |
 
 ## Set one up
 
@@ -65,7 +65,7 @@ Anything but Ollama or MLX sends the prompt to that provider. A prompt can inclu
 
 ## Cost
 
-Sunday sends short prompts with a few retrieved notes, and the planner makes up to six calls per task. Hosted prices change, so check your provider's page. The cheapest way to try a hosted model is the planner role alone.
+Sunday sends short prompts with a few retrieved notes, and the planner makes one call per step, at most 12 steps per task. Hosted prices change, so check your provider's page. The cheapest way to try a hosted model is the planner role alone.
 
 ## Test a provider
 
@@ -75,6 +75,19 @@ SUNDAY_PROVIDER=openai OPENAI_BASE_URL=http://localhost:11434/v1 SUNDAY_PROVIDER
 ```
 
 This runs a real request and a real stream against the chosen provider. The same checks run in CI for every provider against a local mock server.
+
+```mermaid
+flowchart LR
+    role["Role<br/>chat or planner"] --> set{"Saved in Settings?"}
+    set -- "yes" --> use["That provider and model"]
+    set -- "no" --> env{"SUNDAY_PROVIDER set?"}
+    env -- "yes" --> use
+    env -- "no" --> ol["Ollama"]
+    use --> key{"Needs a key?"}
+    key -- "yes" --> kc[("OS keychain")]
+    key -- "no" --> go["Call it"]
+    kc --> go
+```
 
 ## Add a provider
 
