@@ -20,6 +20,14 @@ fn run(cmd: &str, args: &[&str]) -> Result<(), String> {
     if o.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&o.stderr).trim().chars().take(200).collect()) }
 }
 
+fn keys_error(e: String) -> String {
+    if e.contains("-1743") || e.contains("not authorized") {
+        "I need permission to control System Events. Allow Sunday under Privacy and Security, Automation, then ask me again.".to_string()
+    } else {
+        format!("typing failed ({e}); Sunday may need Accessibility permission")
+    }
+}
+
 impl Platform for Mac {
     fn open_app(&self, name: &str) -> Result<(), String> {
         run("open", &["-a", name])
@@ -39,8 +47,14 @@ impl Platform for Mac {
 
     // The text travels as an argument, never inside the script, so it can't be executed as one.
     fn type_text(&self, text: &str) -> Result<(), String> {
-        run("osascript", &["-e", "on run argv\ntell application \"System Events\" to keystroke (item 1 of argv)\nend run", text])
-            .map_err(|e| format!("typing failed ({e}); Sunday may need Accessibility permission"))
+        run("osascript", &["-e", "on run argv\ntell application \"System Events\" to keystroke (item 1 of argv)\nend run", text]).map_err(keys_error)
+    }
+
+    // The modifier words come from `parse_combo`'s fixed table and the key is an argument: nothing the model wrote is script.
+    fn press_keys(&self, combo: &str) -> Result<(), String> {
+        let (mods, key) = super::parse_combo(combo)?;
+        let script = format!("on run argv\ntell application \"System Events\" to keystroke (item 1 of argv) using {{{}}}\nend run", mods.join(", "));
+        run("osascript", &["-e", &script, &key.to_string()]).map_err(keys_error)
     }
 
     fn click(&self, x: f64, y: f64) -> Result<(), String> {
@@ -58,6 +72,19 @@ impl Platform for Mac {
             return Err("the screenshot failed".into());
         }
         Ok(())
+    }
+
+    fn input_access(&self) -> bool {
+        #[link(name = "ApplicationServices", kind = "framework")]
+        extern "C" {
+            fn AXIsProcessTrusted() -> bool;
+        }
+        // SAFETY: a plain query with no arguments. When Sunday is started from a terminal, macOS answers for that terminal.
+        let ok = unsafe { AXIsProcessTrusted() };
+        if !ok {
+            let _ = run("open", &["x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]);
+        }
+        ok
     }
 
     fn screen_access(&self) -> bool {

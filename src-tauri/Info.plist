@@ -4,5 +4,7 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>Sunday listens for its wake word and transcribes what you say.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Sunday types into the app in front when you ask it to, and asks you first.</string>
 </dict>
 </plist>

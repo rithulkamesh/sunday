@@ -32,10 +32,17 @@ pub trait Platform: Send + Sync {
     fn type_text(&self, text: &str) -> Result<(), String>;
     /// Left-click at a point of the main display, 0..1000 each way.
     fn click(&self, x: f64, y: f64) -> Result<(), String>;
+    /// Presses a shortcut such as "cmd+n" in the front app (see `parse_combo`).
+    fn press_keys(&self, combo: &str) -> Result<(), String>;
     /// A full-resolution JPEG of the main display at `path`. Fails with a spoken message if permission is missing.
     fn screenshot(&self, path: &Path) -> Res<()>;
     /// Whether screen capture is allowed (asks once where the OS has a prompt).
     fn screen_access(&self) -> bool;
+    /// Whether typing and clicking are allowed. Where the OS gates them, a refusal also opens the page where the user
+    /// turns it on.
+    fn input_access(&self) -> bool {
+        true
+    }
     /// Display size, the front app, and the windows open (front to back). None if the OS can't say.
     fn desk(&self) -> Option<Desk>;
     fn frontmost_app(&self) -> Option<String> {
@@ -51,6 +58,31 @@ pub trait Platform: Send + Sync {
     fn chrome_path(&self) -> Option<std::path::PathBuf>;
     /// The address of the page open in the front browser.
     fn browser_url(&self, front_app: &str) -> Result<String, String>;
+}
+
+/// "cmd+shift+n" -> (["command down", "shift down"], 'n'). One or more modifiers and one letter or digit, nothing else,
+/// so the words that reach a script come from this table and never from the model.
+pub fn parse_combo(combo: &str) -> Result<(Vec<&'static str>, char), String> {
+    let bad = || format!("I can press shortcuts like cmd+n, not {combo:?}.");
+    let parts: Vec<String> = combo.split('+').map(|p| p.trim().to_lowercase()).collect();
+    let (key, mods) = parts.split_last().filter(|(_, m)| !m.is_empty()).ok_or_else(bad)?;
+    let mut out = Vec::new();
+    for m in mods {
+        let w = match m.as_str() {
+            "cmd" | "command" => "command down",
+            "opt" | "option" | "alt" => "option down",
+            "ctrl" | "control" => "control down",
+            "shift" => "shift down",
+            _ => return Err(bad()),
+        };
+        if !out.contains(&w) {
+            out.push(w);
+        }
+    }
+    match key.chars().collect::<Vec<_>>()[..] {
+        [c] if c.is_ascii_alphanumeric() => Ok((out, c)),
+        _ => Err(bad()),
+    }
 }
 
 pub fn current() -> &'static dyn Platform {
@@ -84,6 +116,9 @@ impl Platform for Recorder {
     }
     fn click(&self, x: f64, y: f64) -> Result<(), String> {
         note(format!("click {x:.0},{y:.0}"))
+    }
+    fn press_keys(&self, combo: &str) -> Result<(), String> {
+        note(format!("press {combo}"))
     }
     fn screenshot(&self, _: &Path) -> Res<()> {
         Err("no screen in the sandbox".into())

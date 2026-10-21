@@ -73,6 +73,7 @@ pub fn epoch() -> u64 {
 
 /// Barge-in: silence playback now and cancel everything stamped before this call.
 pub fn interrupt() {
+    eprintln!("[tts] interrupt");
     EPOCH.fetch_add(1, Ordering::SeqCst);
     QUEUE.lock().unwrap().clear();
     *UNTIL.lock().unwrap() = None;
@@ -85,6 +86,17 @@ const TAIL: Duration = Duration::from_millis(400); // room echo
 /// True while Sunday is audible, so the mic can ignore itself.
 pub fn speaking() -> bool {
     UNTIL.lock().unwrap().is_some_and(|t| Instant::now() < t + TAIL)
+}
+
+/// Sunday's voice: a speaker id in kokoro-en-v0_19. 0 is the default American voice; 1..=4 other American women, 5..=6
+/// American men, 7..=8 British women (bf_emma, bf_isabella), 9..=10 British men.
+pub const VOICE: i32 = 0;
+pub const SPEED: f32 = 1.0;
+
+/// The voice and pace. SUNDAY_VOICE and SUNDAY_VOICE_SPEED try others without a rebuild.
+fn voice() -> (i32, f32) {
+    let get = |k: &str| std::env::var(k).ok().and_then(|v| v.parse().ok());
+    (get("SUNDAY_VOICE").map_or(VOICE, |v| v as i32), get("SUNDAY_VOICE_SPEED").unwrap_or(SPEED))
 }
 
 pub struct Speaker {
@@ -113,7 +125,7 @@ impl Speaker {
         let rate = tts.sample_rate() as u32;
         // The first synthesis is slow (lazy init); pay for it now instead of on the first reply.
         let none: Option<fn(&[f32], f32) -> bool> = None;
-        let _ = tts.generate_with_config("Hi.", &GenerationConfig { sid: 0, speed: 1.0, ..Default::default() }, none);
+        let _ = tts.generate_with_config("Hi.", &GenerationConfig { sid: voice().0, speed: voice().1, ..Default::default() }, none);
 
         let dev = cpal::default_host().default_output_device()?;
         let mut cfg = dev.default_output_config().ok()?.config();
@@ -139,12 +151,18 @@ impl Speaker {
 
     /// Synthesizes at the model's sample rate. Blocks for the synthesis time (RTF is well under 1).
     pub fn synth(&self, text: &str) -> Vec<f32> {
-        self.synth_sid(text, 0)
+        let (sid, speed) = voice();
+        self.synth_with(text, sid, speed)
     }
 
     /// Same, in another of the model's voices (speaker id).
+    #[cfg(test)]
     pub fn synth_sid(&self, text: &str, sid: i32) -> Vec<f32> {
-        let cfg = GenerationConfig { sid, speed: 1.0, ..Default::default() };
+        self.synth_with(text, sid, 1.0)
+    }
+
+    fn synth_with(&self, text: &str, sid: i32, speed: f32) -> Vec<f32> {
+        let cfg = GenerationConfig { sid, speed, ..Default::default() };
         let none: Option<fn(&[f32], f32) -> bool> = None;
         self.tts.generate_with_config(text, &cfg, none).map(|a| a.samples().to_vec()).unwrap_or_default()
     }
@@ -152,10 +170,10 @@ impl Speaker {
     /// Queues the audio unless an interrupt happened since `epoch`. False if dropped.
     pub fn speak(&self, text: &str, epoch: u64) -> bool {
         let audio = self.synth(text);
-        if epoch != self::epoch() {
+        if !self.enqueue_if(&audio, epoch) {
+            eprintln!("[tts] dropped a sentence: interrupted while it was being made");
             return false;
         }
-        self.enqueue(&audio);
         let mut said = SAID.lock().unwrap();
         said.push_str(text);
         said.push(' ');
@@ -164,6 +182,20 @@ impl Speaker {
             let cut = (cut..said.len()).find(|i| said.is_char_boundary(*i)).unwrap_or(0);
             said.drain(..cut);
         }
+        true
+    }
+
+    /// Queues the audio only if no interrupt has happened since `epoch`. The check and the push happen under the same locks
+    /// `interrupt` takes to clear the queue, so a barge-in can't slip between them and leave stale audio playing.
+    fn enqueue_if(&self, samples: &[f32], epoch: u64) -> bool {
+        let secs = samples.len() as f64 / self.tts.sample_rate() as f64;
+        let mut until = UNTIL.lock().unwrap();
+        let mut queue = QUEUE.lock().unwrap();
+        if epoch != self::epoch() {
+            return false;
+        }
+        *until = Some(until.filter(|t| *t > Instant::now()).unwrap_or_else(Instant::now) + Duration::from_secs_f64(secs));
+        queue.extend(samples);
         true
     }
 
@@ -229,6 +261,19 @@ mod tests {
         assert!(!is_echo("answer")); // one word is too ambiguous to drop
         *UNTIL.lock().unwrap() = Some(Instant::now() - Duration::from_secs(10));
         assert!(!is_echo("I can answer questions and help")); // long ago: a real person
+    }
+
+    /// Plays the same sentence in a few voices and paces, so one can be picked by ear:
+    /// `cargo test speaks_aloud -- --ignored --nocapture`, then set SUNDAY_VOICE and SUNDAY_VOICE_SPEED (or the constants).
+    #[test]
+    #[ignore = "needs the speech models from scripts/fetch-models.sh and a speaker"]
+    fn speaks_aloud() {
+        let s = Speaker::new().expect("tts unavailable");
+        for (i, (sid, speed)) in [(0, 1.0), (0, 1.1), (7, 1.0), (8, 1.0)].into_iter().enumerate() {
+            println!("option {}: voice {sid} speed {speed}", i + 1);
+            s.enqueue(&s.synth_with(&format!("Option {}. Good evening. I've opened Notes. Is there anything else you need?", i + 1), sid, speed));
+            std::thread::sleep(UNTIL.lock().unwrap().unwrap().saturating_duration_since(Instant::now()) + Duration::from_millis(700));
+        }
     }
 
     /// Needs the models from scripts/fetch-models.sh. Prints synthesis time vs audio length.
