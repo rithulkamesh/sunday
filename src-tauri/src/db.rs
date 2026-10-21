@@ -375,6 +375,15 @@ impl Db {
         self.0.lock().unwrap().query_row("SELECT value FROM kv WHERE key = ?", [key], |r| r.get(0)).optional().unwrap()
     }
 
+    /// The page the agent opened most recently, if that was in the last `within_secs`: what "it" is when the user says
+    /// "sort it" or "scroll down" in a new request.
+    pub fn last_opened_url(&self, within_secs: i64) -> Option<String> {
+        let args: String = self.0.lock().unwrap().query_row("SELECT args FROM actions WHERE tool = 'open_url' AND ts >= ? ORDER BY id DESC LIMIT 1", [now() - within_secs], |r| r.get(0)).optional().ok()??;
+        // args is the step as JSON, then a note in brackets: {"tool":"open_url","url":"...",...} [Reversible, auto]
+        let json = &args[..args.rfind('}')? + 1];
+        serde_json::from_str::<serde_json::Value>(json).ok()?["url"].as_str().map(str::to_string)
+    }
+
     /// The audit trail of everything Sunday did (or was told not to do) on the computer.
     pub fn act_log(&self, task: &str, tool: &str, args: &str, outcome: &str) {
         let _ = self.0.lock().unwrap().execute("INSERT INTO actions(ts, task, tool, args, outcome) VALUES (?,?,?,?,?)", params![now(), task, tool, args, outcome]);
