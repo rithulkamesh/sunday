@@ -99,6 +99,7 @@ mod tests {
     /// Needs the models. Kokoro's other voices stand in for other people: same voice must score
     /// well above them. Prints the numbers the thresholds are chosen from.
     #[test]
+    #[ignore = "needs the speech models from scripts/fetch-models.sh"]
     fn tells_voices_apart() {
         let tts = crate::tts::Speaker::new().expect("tts unavailable");
         let rs = sherpa_onnx::LinearResampler::create(24_000, 16_000).unwrap();

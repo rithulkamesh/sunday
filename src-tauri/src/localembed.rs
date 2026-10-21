@@ -73,10 +73,8 @@ mod tests {
 
     /// Needs the model files (scripts/fetch-embed-model.sh); skipped without them.
     #[test]
+    #[ignore = "needs the on-device embedding model"]
     fn similar_texts_are_closer_and_vectors_are_unit_length() {
-        if !installed() {
-            return;
-        }
         let v = embed(&["my driving test is in February".into(), "when do I take my driving exam".into(), "TCP slow start".into()]).unwrap();
         assert!(v.iter().all(|e| e.len() == 384 && (e.iter().map(|x| x * x).sum::<f32>() - 1.0).abs() < 1e-3));
         let dot = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();

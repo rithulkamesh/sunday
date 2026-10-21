@@ -375,7 +375,6 @@ impl Stt {
 mod tests {
     use super::*;
 
-    /// Needs the models from scripts/fetch-models.sh.
     #[test]
     fn filler_is_not_a_request() {
         assert!(is_filler("Mm-hmm.") && is_filler("Yeah.") && is_filler("Mm."));
@@ -383,6 +382,8 @@ mod tests {
     }
 
     #[test]
+
+    #[ignore = "needs the speech models from scripts/fetch-models.sh"]
     fn transcribes_a_wav() {
         let wav = sherpa_onnx::Wave::read(&path(&format!("{PARAKEET}/test_wavs/0.wav"))).unwrap();
         let mut stt = Stt::new().expect("models missing");
@@ -419,6 +420,7 @@ mod tests {
 
     /// Kokoro says it, the spotter must hear it: wake on "Sunday", not on "Monday".
     #[test]
+    #[ignore = "needs the speech models from scripts/fetch-models.sh"]
     fn spots_keywords() {
         let tts = crate::tts::Speaker::new().expect("tts unavailable");
         let rs = sherpa_onnx::LinearResampler::create(24_000, 16_000).unwrap();
@@ -443,6 +445,7 @@ mod tests {
     /// Sunday's own voice never pauses; the quick VAD used while muted must keep flushing it
     /// (sherpa prints "circular-buffer ... Overflow!" to stderr if segments pile up).
     #[test]
+    #[ignore = "needs the speech models from scripts/fetch-models.sh"]
     fn long_muted_speech_is_flushed() {
         let tts = crate::tts::Speaker::new().expect("tts unavailable");
         let rs = sherpa_onnx::LinearResampler::create(24_000, 16_000).unwrap();
@@ -459,6 +462,7 @@ mod tests {
     /// another voice scores lower. (Kokoro voices stand in for people; they resemble each other, so only
     /// the ordering is asserted here, and the real thresholds are tuned from the logged scores.)
     #[test]
+    #[ignore = "needs the speech models from scripts/fetch-models.sh"]
     fn enrolls_then_verifies() {
         let tts = crate::tts::Speaker::new().expect("tts unavailable");
         let rs = sherpa_onnx::LinearResampler::create(24_000, 16_000).unwrap();
@@ -505,10 +509,8 @@ mod tests {
 
     /// Timing of each speech stage against real time. Run with SUNDAY_BENCH=1 --nocapture.
     #[test]
+    #[ignore = "needs the speech models from scripts/fetch-models.sh; a benchmark"]
     fn bench_speech_pipeline() {
-        if std::env::var("SUNDAY_BENCH").is_err() {
-            return;
-        }
         let tts = crate::tts::Speaker::new().expect("tts unavailable");
         let rs = sherpa_onnx::LinearResampler::create(24_000, 16_000).unwrap();
         let said = "The scheduler picks the next process from the ready queue and gives it the processor for a short time slice, and when the slice ends the process goes back to the queue. \

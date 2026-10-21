@@ -295,6 +295,7 @@ mod tests {
 
     /// Needs Ollama with the embedding and text models. Remembers, extracts from text, deduplicates, recalls by meaning.
     #[test]
+    #[ignore = "needs Ollama with the embedding and chat models"]
     fn remembers_and_recalls_by_meaning() {
         let _turn = EMBEDDER.lock().unwrap_or_else(|e| e.into_inner());
         set_local(false);
@@ -324,10 +325,8 @@ mod tests {
 
     /// Prints similarities so the thresholds can be chosen from data (run with --nocapture; SUNDAY_EMBED_LOCAL=1 for MiniLM).
     #[test]
+    #[ignore = "needs Ollama (prints thresholds)"]
     fn similarity_calibration() {
-        if std::env::var("SUNDAY_MEM_CALIBRATE").is_err() {
-            return;
-        }
         set_local(std::env::var("SUNDAY_EMBED_LOCAL").is_ok());
         let facts = ["my driving test is on the 8th of February", "The Banker's algorithm avoids deadlock by granting a resource request only if the system stays in a safe state",
             "TCP uses slow start and congestion avoidance to adapt its window", "I prefer studying in the mornings"];
@@ -343,10 +342,8 @@ mod tests {
 
     /// Facts saved with another embedder's vectors can't be compared to this one's, so they are found by keyword.
     #[test]
+    #[ignore = "needs the on-device embedding model"]
     fn switching_embedder_keeps_old_facts_findable() {
-        if !crate::localembed::installed() {
-            return;
-        }
         let _turn = EMBEDDER.lock().unwrap_or_else(|e| e.into_inner());
         let db = Db::open(&std::env::temp_dir().join(format!("sunday-mem-{}-c.db", std::process::id()))).unwrap();
         let f = NewFact { kind: "user", source: "you", title: "", text: "My driving test is on the 8th of February", confidence: 1.0, event_date: "" };

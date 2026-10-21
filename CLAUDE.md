@@ -5,7 +5,8 @@ Local-first personal agent. Tauri 2: Rust backend in `src-tauri/src`, React 19 f
 ## Commands
 
 - Run: `bun install && bun run tauri dev` (needs Ollama running, models from `scripts/fetch-models.sh`)
-- Rust tests: `cd src-tauri && cargo test`
+- Rust tests: `cd src-tauri && cargo test` (hermetic: no Ollama, models, screen or network; this is what CI runs)
+- Live tests: `bun run test:live` runs the `#[ignore]`d ones that need Ollama, models, the screen or the web. A new test that needs any of those must be `#[ignore = "needs ..."]`, never an early `return`.
 - Frontend types: `bunx tsc --noEmit`
 
 ## Where things live
