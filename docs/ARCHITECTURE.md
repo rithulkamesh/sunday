@@ -90,7 +90,7 @@ flowchart TD
     fail --> limits
 ```
 
-A failed or unverified step is not "done": the planner reads `failed or NOT verified` in the step log and can try again differently. Every log line carries the tool and what it was given (`open_url(https://…) → done (verified)`), so the model can tell what was already done. Three failures in a row end the task with an honest message instead of trying forever, and a missing permission ends it at once because retrying cannot fix it.
+A failed or unverified step is not "done": the planner reads `failed or NOT verified` in the step log and can try again differently. Every log line carries the tool and what it was given (`open_url(https://…) → done (verified)`), so the model can tell what was already done. The planner is also told what was said just before the task and which page it last opened, so "sort it by the best" means something; a small model often returns only the changed part of an address (`&sp=CAM%3D`), which the loop completes from that page before the usual checks. A spoken reply is capped at two sentences. Three failures in a row end the task with an honest message instead of trying forever, and a missing permission ends it at once because retrying cannot fix it.
 
 ### Approvals
 
