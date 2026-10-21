@@ -48,7 +48,7 @@ What each of these does in detail: [docs/FEATURES.md](docs/FEATURES.md).
 ## What's next (v1)
 
 1. **Measure**: grow the eval suite to 50 tasks and track the pass rate every night.
-2. **Agent loop**: persistent tasks that survive restarts (the loop and verifiers are in review).
+2. **Agent loop**: persistent tasks that survive restarts, and follow-ups on what is already open (the loop and verifiers have shipped).
 3. **Tools**: MCP, a sandboxed shell, a browser driver.
 4. **Memory that compounds**: successful runs become reusable skills, gated by the evals.
 5. **Self-improvement**: failure analysis and a promotion gate; the router already learns from corrections.
@@ -74,7 +74,7 @@ Say "sunday" or hold fn, then talk, or type in the workspace. Full walkthrough a
 
 - [Getting started](docs/GETTING_STARTED.md): install, first run, things to try, where to begin hacking
 - [Architecture](docs/ARCHITECTURE.md): the agent loop, approvals, routing, platform layer and data model, as diagrams
-- [Roadmap](docs/ROADMAP.md): what shipped, what is in review, what is next
+- [Roadmap](docs/ROADMAP.md): what shipped and what is next
 - [Features](docs/FEATURES.md): what exists and how it behaves
 - [Providers](docs/PROVIDERS.md): Ollama, MLX and hosted models, keys and privacy
 - [Router](docs/ROUTER.md): how an utterance becomes an action, and how that gets smarter

@@ -10,7 +10,7 @@ Sunday's goal is a number, not a vibe:
 
 > **v1 bar:** Sunday completes open-ended, multi-day goals on your own machine with no hand-holding, scoring **>= 70% on a fixed 50-task eval suite**, with the pass rate rising week over week while the model stays constant.
 
-The [v1 master issue](https://github.com/rithulkamesh/sunday/issues/31) is the source of truth and every item below is a labelled GitHub issue. This page is a snapshot (last updated 19 October 2026) so you can see the shape of the work without opening the tracker.
+The [v1 master issue](https://github.com/rithulkamesh/sunday/issues/31) is the source of truth and every item below is a labelled GitHub issue. This page is a snapshot (last updated 21 October 2026) so you can see the shape of the work without opening the tracker.
 
 ## The shape of it
 
@@ -42,7 +42,7 @@ flowchart LR
     class p5,p6 later
 ```
 
-Green is shipped, amber is in review, blue is next, grey is later.
+Green is shipped, amber is partly shipped, blue is next, grey is later.
 
 ## Shipped
 
@@ -53,14 +53,9 @@ Green is shipped, amber is in review, blue is next, grey is later.
 | **Providers.** One trait, then Ollama, MLX (on this Mac, no Ollama), OpenAI-compatible, Anthropic, Gemini and Amazon Nova, a conformance suite and a settings screen with keys in the OS keychain | [#32](https://github.com/rithulkamesh/sunday/issues/32) to [#39](https://github.com/rithulkamesh/sunday/issues/39) |
 | **Platform layer.** Every OS call behind one trait, so a port is one file | [#21](https://github.com/rithulkamesh/sunday/issues/21) |
 | **CI and docs.** Build and test on macOS, a docs site that fails on broken links, a guide for working with coding agents | [#22](https://github.com/rithulkamesh/sunday/issues/22), [#44](https://github.com/rithulkamesh/sunday/issues/44), [#20](https://github.com/rithulkamesh/sunday/issues/20) |
-
-## In review
-
-| What | Where |
-|---|---|
 | **Agent loop and verifiers.** Budgets, a check of real state after every step, retry on failure, an honest stop. Typing your own words and the shortcuts for new note, save and new tab no longer ask | [#5](https://github.com/rithulkamesh/sunday/issues/5), [#6](https://github.com/rithulkamesh/sunday/issues/6), [PR #54](https://github.com/rithulkamesh/sunday/pull/54) |
 | **Hermetic tests, faster CI.** Default tests need nothing external; the rest are ignored with a reason and run with `bun run test:live` | [PR #55](https://github.com/rithulkamesh/sunday/pull/55) |
-| **A smarter router.** An optional fine-tuned Laya decision model for what `Rules` has no pattern for (98% and 94% on two held-out sets, no conversation sent to an action), and a memory that learns from corrections at once. `Rules` stays the fallback | [Router](ROUTER.md), related to [#41](https://github.com/rithulkamesh/sunday/issues/41) |
+| **A smarter router.** An optional fine-tuned Laya decision model for what `Rules` has no pattern for (98% and 94% on two held-out sets, no conversation sent to an action), and a memory that learns from corrections at once. `Rules` stays the fallback | [Router](ROUTER.md), [PR #57](https://github.com/rithulkamesh/sunday/pull/57), related to [#41](https://github.com/rithulkamesh/sunday/issues/41) |
 
 ## Next
 
@@ -76,7 +71,8 @@ Green is shipped, amber is in review, blue is next, grey is later.
 | Issue | What |
 |---|---|
 | [#4](https://github.com/rithulkamesh/sunday/issues/4) | A persistent task object: goal, plan, state and artifacts that survive restarts |
-| [#5](https://github.com/rithulkamesh/sunday/issues/5), [#6](https://github.com/rithulkamesh/sunday/issues/6) | Plan, act, observe, verify, replan, with verifiers (in review; still open: a token budget and a planner that returns a whole step list) |
+| [#58](https://github.com/rithulkamesh/sunday/issues/58) | Follow-ups on what is already open: continuity, reusing the tab or window, grounded actions, fewer pointless questions |
+| [#5](https://github.com/rithulkamesh/sunday/issues/5), [#6](https://github.com/rithulkamesh/sunday/issues/6) | Plan, act, observe, verify, replan, with verifiers (shipped; still open: a token budget and a planner that returns a whole step list) |
 
 ### Phase 2: tools
 
