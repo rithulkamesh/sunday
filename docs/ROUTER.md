@@ -24,7 +24,7 @@ flowchart TD
 
 ## Rules
 
-`Rules` (in `decision.rs`) is a list of patterns checked in order: "learn my voice", "read this page", "research X", "run skill …", "teach me …", a spoken command such as "open …", "show me YouTube videos …", "sort by …" and so on. It ignores fillers and corrections at the start ("uh", "I said", "no,") and the wake word, so they don't hide a command.
+`Rules` (in `decision.rs`) is a list of patterns checked in order (a command that starts with an operating verb wins over a mention of the screen: "sort what is on my screen by the best" acts, "what is on my screen" explains): "learn my voice", "read this page", "research X", "run skill …", "teach me …", a spoken command such as "open …", "show me YouTube videos …", "sort by …" and so on. It ignores fillers and corrections at the start ("uh", "I said", "no,") and the wake word, so they don't hide a command.
 
 It is fast, explainable and always right about what it covers. It cannot use context: "Could you go more in detail?" means one thing after a description of your screen and another after an explanation of a mutex, and `Rules` sees only the words. It also has no way to know that "what's the weather in Paris" needs the web.
 
@@ -62,7 +62,7 @@ Nothing downloads on its own, and the app works without it. To train, export and
 
 ## Corrections teach it, at once
 
-The same turn-by-turn log lets the router learn from you without retraining. When you restate a command right after a turn that went to chat ("Ranked by the best." … "I said can you sort by the best?"), the first utterance is stored with the route the second one took, together with an embedding. Next time something close to it comes up in the same context, that route is used before the model is asked. A new example that contradicts an old one replaces it, so one wrong correction can't stick.
+The same turn-by-turn log lets the router learn from you without retraining. When you say outright that you are fixing the turn before ("I said …", "no, …", "I meant …") right after a turn that went to chat ("Ranked by the best." … "I said can you sort by the best?"), the first utterance is stored with the route the second one took, together with an embedding. Only an explicit marker counts: sharing a few words with the last utterance is not enough, because speech recognition garbles things and a garble that happens to share words would teach the wrong route (that happened once in live use, "say it by the best", and is why). Next time something close to it comes up in the same context, that route is used before the model is asked. A new example that contradicts an old one replaces it, so one wrong correction can't stick.
 
 The examples are rows in the local `route_examples` table. There is no screen to list or clear them yet; they are plain SQLite rows. A slower loop that retrains the model on them, and only ships a new checkpoint that passes the held-out sets, is tracked in [#56](https://github.com/rithulkamesh/sunday/issues/56).
 

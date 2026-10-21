@@ -1,5 +1,5 @@
-//! The router learns from corrections at once, with no retraining. When the user restates a command right after a turn
-//! that went to chat ("Ranked by the best." ... "I said can you sort by the best?"), the first utterance is remembered
+//! The router learns from corrections at once, with no retraining. When the user says outright that they are fixing the
+//! turn before, right after a turn that went to chat ("Ranked by the best." ... "I said can you sort by the best?"), the first utterance is remembered
 //! with the route the second one took; the next time something close to it comes up, that route is used. Examples live
 //! in the local `route_examples` table, and a retrained model (issue #56) can use the same rows.
 //! It only picks a route, like the rest of the router: permissions and approvals are unchanged.
@@ -23,16 +23,12 @@ struct Turn {
     at: i64,
 }
 
-/// Is `cur` the user restating or fixing `prev`: a marker ("I said ..."), or mostly the same words again?
-pub fn is_correction(prev: &str, cur: &str) -> bool {
+/// Does `cur` say outright that it is fixing the turn before ("I said ...", "no, ...")? Only an explicit marker counts.
+/// Sharing a few words with the previous utterance is not enough: speech recognition garbles things ("sort by the
+/// best" heard as "say it by the best"), and a garble that happens to share words would teach the wrong route.
+pub fn is_correction(cur: &str) -> bool {
     let c = cur.trim().to_lowercase();
-    if MARKERS.iter().any(|m| c.starts_with(m)) {
-        return true;
-    }
-    let words = |t: &str| t.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() > 2).map(String::from).collect::<std::collections::HashSet<_>>();
-    let (a, b) = (words(prev), words(cur));
-    let common = a.intersection(&b).count();
-    common >= 2 && common * 2 >= a.len().min(b.len())
+    MARKERS.iter().any(|m| c.starts_with(m))
 }
 
 /// The remembered example closest to `emb` in the same context, if it is close enough: (route, similarity).
@@ -70,7 +66,7 @@ pub fn recall(db: &Db, last: &str, text: &str) -> Option<String> {
 pub fn observe(db: &Db, text: &str, last: &str, route: &str) {
     let t = now();
     let prev: Option<Turn> = db.kv_get("last_turn").and_then(|j| serde_json::from_str(&j).ok());
-    if let Some(p) = prev.filter(|p| p.route == "chat" && matches!(route, "do" | "screen" | "research") && t - p.at <= WINDOW_SECS && is_correction(&p.text, text)) {
+    if let Some(p) = prev.filter(|p| p.route == "chat" && matches!(route, "do" | "screen" | "research") && t - p.at <= WINDOW_SECS && is_correction(text)) {
         if let Some(e) = embedding(&p.text) {
             eprintln!("[router] learned: {:?} after {:?} means {route}", p.text, p.last);
             remember_with(db, &p.last, &p.text, route, &e);
@@ -88,12 +84,14 @@ mod tests {
     }
 
     #[test]
-    fn a_correction_is_a_marker_or_the_same_words() {
-        assert!(is_correction("Ranked by the best.", "I said can you sort by the best?"));
-        assert!(is_correction("pull up the best videos", "no, pull up the best videos please"));
-        assert!(is_correction("sort by newest first", "sort by newest first please"));
-        assert!(!is_correction("what is a mutex", "open Safari"));
-        assert!(!is_correction("hello there", "sort by the best"));
+    fn a_correction_needs_an_explicit_marker() {
+        assert!(is_correction("I said can you sort by the best?"));
+        assert!(is_correction("no, pull up the best videos please"));
+        assert!(is_correction("Actually open Notes"));
+        assert!(!is_correction("open Safari"));
+        // Real log: a garbled "sort by the best", then another garble that shares "the best". Not a correction.
+        assert!(!is_correction("what is on my screen by the best."));
+        assert!(!is_correction("sort by newest first please"), "the same words again are not enough");
     }
 
     #[test]

@@ -141,7 +141,7 @@ flowchart TD
     a --> p{"permitted()?"}
     p -- "no" --> why["Say why"]
     p -- "yes" --> go["Run it"]
-    a -. "this turn restated the last one" .-> learn[("route_examples<br/>local table")]
+    a -. "you said you were fixing the last turn" .-> learn[("route_examples<br/>local table")]
     learn -.-> m
 ```
 

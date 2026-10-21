@@ -87,6 +87,10 @@ impl Decider for Rules {
             return Action::ClearScreen;
         }
         if has(&[" my screen ", " this screen ", " on screen ", " on the screen ", " what i'm looking at ", " what im looking at ", " this page ", " this problem ", " this question ", " explain this ", " what is this ", " what's this ", " point to ", " point at ", " draw on "]) {
+            // "sort what is on my screen by the best": the screen is where the command applies, not the question.
+            if let Some(task) = computer_task(text).filter(|_| has(&[" on my screen ", " on the screen ", " on screen "])) {
+                return Action::Do(task);
+            }
             return Action::Screen(fix_heard(text.trim()));
         }
         for lead in [" run skill ", " use skill ", " use the skill "] {
@@ -222,6 +226,9 @@ mod tests {
         assert!(matches!(d("play some jazz on spotify", false), Do(_)));
         assert!(matches!(d("Uh can you sort by the best videos?", false), Do(_)), "a follow-up on what is on screen is an action");
         assert!(matches!(d("scroll down a bit", false), Do(_)));
+        assert!(matches!(d("Sandhi, can you sort what is on my screen by the best?", false), Do(_)), "a command applied to what is on screen acts");
+        assert!(matches!(d("click the button on my screen", false), Do(_)));
+        assert!(matches!(d("explain what is on my screen", false), Screen(_)), "no operating verb: still a question about the screen");
         assert!(matches!(d("I said can you sort by the best?", false), Do(_)), "a repeated command is still a command");
         assert!(matches!(d("no, open Notes", false), Do(_)));
         assert!(matches!(d("sunday, um, go back", false), Do(_)));
