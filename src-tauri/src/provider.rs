@@ -303,6 +303,11 @@ impl Provider for Ollama {
             body["format"] = s;
         }
         let v: Value = chat(model, &body, Some(timeout_s))?.into_json()?;
+        // A load this long means another model pushed this one out of memory: the reply pays for the reload.
+        let load = v["load_duration"].as_u64().unwrap_or(0) / 1_000_000;
+        if load > 1000 {
+            eprintln!("[perf] {model} was reloaded for this call: {load} ms");
+        }
         Ok(v["message"]["content"].as_str().unwrap_or("").to_string())
     }
 

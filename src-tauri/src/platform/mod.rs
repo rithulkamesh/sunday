@@ -27,6 +27,10 @@ pub trait Platform: Send + Sync {
     fn open_app(&self, name: &str) -> Result<(), String>;
     /// `browser`: the browser to use, if one is already open; otherwise the system default.
     fn open_url(&self, url: &str, browser: Option<&str>) -> Result<(), String>;
+    /// Points the front tab of `browser` at `url` instead of opening a new tab.
+    fn navigate(&self, _url: &str, _browser: &str) -> Result<(), String> {
+        Err("not supported here".into())
+    }
     fn open_path(&self, path: &Path) -> Result<(), String>;
     /// Types into the front app. The text is never run as a script.
     fn type_text(&self, text: &str) -> Result<(), String>;
@@ -107,6 +111,9 @@ impl Platform for Recorder {
             Some(b) => format!("open -a {b} {url}"),
             None => format!("open {url}"),
         })
+    }
+    fn navigate(&self, url: &str, browser: &str) -> Result<(), String> {
+        note(format!("navigate {browser} {url}"))
     }
     fn open_path(&self, path: &Path) -> Result<(), String> {
         note(format!("open {}", path.display()))

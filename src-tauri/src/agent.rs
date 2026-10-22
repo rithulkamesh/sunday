@@ -281,7 +281,12 @@ fn exec(db: &Db, s: &Step, eyes: &Eyes) -> Result<String, String> {
     let os = crate::platform::current();
     match s.tool.as_str() {
         "open_app" => os.open_app(s.name.trim()).map(|_| "done".into()),
-        "open_url" => os.open_url(s.url.trim(), browser_open().as_deref()).map(|_| "done".into()),
+        "open_url" => {
+            let browser = browser_open();
+            // A refinement of the page in front changes that tab instead of piling up new ones.
+            let reused = browser.as_deref().is_some_and(|b| crate::web::browser_url(b).is_ok_and(|front| same_host(&front, &s.url)) && os.navigate(s.url.trim(), b).is_ok());
+            if reused { Ok("done".into()) } else { os.open_url(s.url.trim(), browser.as_deref()).map(|_| "done".into()) }
+        }
         "open_path" => os.open_path(&safe_path(&s.path)?).map(|_| "done".into()),
         "type_text" => os.type_text(s.text.trim()).map(|_| "done".into()),
         "press_keys" => os.press_keys(s.query.trim()).map(|_| "done".into()),
@@ -376,14 +381,15 @@ pub fn drive(db: &Db, st: &mut State, plan: &dyn Fn(&State) -> Res<Step>, eyes: 
             }
         }
         st.done.push(key);
-        let trusted = s.tool == "type_text" && typing_trusted(st, &s, crate::platform::current().frontmost_app());
+        let same_page = s.tool == "open_url" && db.last_opened_url(900).is_some_and(|last| same_host(&last, &s.url));
+        let trusted = same_page || s.tool == "type_text" && typing_trusted(st, &s, crate::platform::current().frontmost_app());
         if needs_yes(&s, st.tainted) && !trusted {
             let q = describe(&s);
             st.waiting = Some(s);
             save(db, st);
             return Ok(Out::Ask(q));
         }
-        observe(db, st, &s, eyes, if trusted { "own words" } else { "auto" });
+        observe(db, st, &s, eyes, if same_page { "same page" } else if trusted { "own words" } else { "auto" });
     }
 }
 
@@ -559,6 +565,14 @@ mod tests {
         let mut s = Step { tool: tool.into(), ..Step::default() };
         f(&mut s);
         s
+    }
+
+    #[test]
+    fn refinements_stay_on_the_host_of_the_page() {
+        assert!(same_host("https://www.youtube.com/results?search_query=ml", "https://www.youtube.com/results?search_query=ml&sp=CAM%253D"));
+        assert!(!same_host("https://www.youtube.com/results", "https://evil.example/results"));
+        assert!(!same_host("https://www.youtube.com/", "https://youtube.com.evil.example/"));
+        assert!(!same_host("not a url", "not a url"));
     }
 
     #[test]
@@ -814,5 +828,34 @@ mod live {
         let log = vec!["- open_url(https://www.youtube.com/results?search_query=machine+learning) → done (verified)".to_string()];
         let yt = plan(&State { task: "show me YouTube videos on machine learning".into(), log, ..State::default() }).unwrap();
         assert!(yt.tool == "finish" || (yt.tool == "open_url" && yt.url.contains("youtube.com")), "the page is open, so the task is done: {yt:?}");
+    }
+
+    /// Drives the real browsers (every one of Safari, Dia and Chrome that is installed) on YouTube: sorting the results must
+    /// change the front tab, not add one. Needs Automation permission for the terminal. Run with `bun run test:live tab_is_reused`.
+    #[test]
+    #[ignore = "needs Safari, Dia or Chrome and Automation permission; drives the real browsers"]
+    fn tab_is_reused_for_a_refinement() {
+        let os = crate::platform::current();
+        let (page, sorted) = ("https://www.youtube.com/results?search_query=machine+learning", "https://www.youtube.com/results?search_query=machine+learning&sp=CAM%253D");
+        for browser in ["Safari", "Dia", "Google Chrome"] {
+            if std::process::Command::new("open").args(["-Ra", browser]).status().map_or(true, |s| !s.success()) {
+                println!("{browser}: not installed, skipped");
+                continue;
+            }
+            let tabs = || {
+                let script = format!(r#"tell application "{browser}" to count tabs of front window"#);
+                std::process::Command::new("osascript").args(["-e", &script]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().unwrap_or(0)).unwrap()
+            };
+            os.open_url(page, Some(browser)).unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(4));
+            let (before, front) = (tabs(), os.browser_url(browser).unwrap());
+            assert!(same_host(&front, sorted), "{browser}: front tab is {front}");
+            os.navigate(sorted, browser).unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let now = os.browser_url(browser).unwrap();
+            println!("{browser}: tabs {before} -> {}, front tab now {now}", tabs());
+            assert_eq!(tabs(), before, "{browser}: a new tab was opened");
+            assert!(now.contains("sp=CAM"), "{browser}: the front tab did not change: {now}");
+        }
     }
 }
