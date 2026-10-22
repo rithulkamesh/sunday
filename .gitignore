@@ -10,3 +10,8 @@ website/.docusaurus
 # Your own labelled transcripts for the router held-out set (see scripts/laya/README.md). Local only: they are your words.
 evals/router/real.jsonl
 tools/laya-router/target
+
+# Local secrets (HF_TOKEN for scripts/laya/publish.sh)
+.env
+.env.*
+!.env.example

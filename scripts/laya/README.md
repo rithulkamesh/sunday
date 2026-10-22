@@ -58,3 +58,15 @@ scripts/build-laya.sh                                  # builds tools/laya-route
 Then run Sunday. The log says `[laya] router ready` when it loaded, and `[laya] do 0.96 in 120ms -> do` for each utterance the model was asked about. `SUNDAY_ROUTER=rules` turns it off.
 
 The sidecar is a separate program because the app already links sherpa-onnx, which embeds its own ONNX Runtime, and two copies in one binary clash.
+
+## Publish (maintainers)
+
+```sh
+scripts/laya/publish.sh v1          # uploads the weights and model card to Hugging Face, writes router.sha256
+git add scripts/laya/router.sha256 && git commit -m "Pin router v1"
+git tag router-v1 && git push origin router-v1   # CI builds the sidecar and attaches it to the release
+```
+
+`hf auth login` first. `fetch-router.sh` reads the pinned revision and checksums from `router.sha256`, so a published model only reaches users once that file is committed and the tag is pushed.
+
+The app itself is released by tagging `vX.Y.Z` (`.github/workflows/release.yml`); `scripts/install.sh` installs it.
