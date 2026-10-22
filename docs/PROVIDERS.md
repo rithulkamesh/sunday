@@ -30,12 +30,18 @@ Prefer environment variables? They win over saved settings, which is handy for C
 |---|---|---|
 | `ollama` | none | runs on `localhost:11434` |
 | `mlx` (on this Mac, no Ollama) | none | Apple Silicon only. Model is a Hugging Face id such as `mlx-community/Qwen3-4B-Instruct-2507-4bit`; get it with `scripts/fetch-mlx-model.sh <id>` |
-| `openai` (OpenAI, OpenRouter, vLLM, LM Studio, llama.cpp server) | `OPENAI_API_KEY`, optional for local servers | `OPENAI_BASE_URL` |
+| `lmstudio` (local) | none | `LMSTUDIO_BASE_URL`, default `http://localhost:1234/v1` |
+| `openrouter` | `OPENROUTER_API_KEY` | model ids look like `openai/gpt-4o-mini` |
+| `openai` (OpenAI, vLLM, llama.cpp server, any OpenAI-compatible URL) | `OPENAI_API_KEY`, optional for local servers | `OPENAI_BASE_URL` |
 | `anthropic` | `ANTHROPIC_API_KEY` | |
 | `gemini` | `GEMINI_API_KEY` | uses Google's OpenAI-compatible endpoint |
 | `nova` (Amazon Nova on Bedrock) | `AWS_BEARER_TOKEN_BEDROCK` | `AWS_REGION`, default `us-east-1`; replies arrive in one piece, not word by word |
 
 `SUNDAY_PROVIDER` and `SUNDAY_MODEL` still pick the provider and model for chat when nothing is saved in Settings.
+
+## LM Studio
+
+Start the local server in LM Studio (Developer tab, default port 1234), load a model, then pick **LM Studio** in **Settings → Models → Change**. The model list comes from the server. Prompts stay on your machine. Use an instruct build, not a thinking one, and one that supports structured output so the planner's JSON schema is honoured. Embeddings and vision still use Ollama or the on-device embedder.
 
 ## Run without Ollama (MLX)
 

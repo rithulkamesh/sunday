@@ -1,0 +1,32 @@
+name: Release router
+# Builds the routing sidecar (tools/laya-router) for Apple silicon and attaches it, with its checksum, to the release
+# for a router-v* tag. scripts/fetch-router.sh downloads it and ad-hoc signs it on the user's machine.
+on:
+  push:
+    tags: ["router-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/laya-router
+      - name: Build
+        working-directory: tools/laya-router
+        run: cargo build --release --locked
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset=laya-router-aarch64-apple-darwin
+          cp tools/laya-router/target/release/laya-router "$asset"
+          shasum -a 256 "$asset" > "$asset.sha256"
+          gh release create "$GITHUB_REF_NAME" "$asset" "$asset.sha256" --latest=false --title "Router ${GITHUB_REF_NAME#router-}" \
+            --notes "Routing sidecar for Apple silicon. Install with scripts/fetch-router.sh (weights are on Hugging Face)."

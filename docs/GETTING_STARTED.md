@@ -10,21 +10,28 @@ title: Get started
 
 - **macOS** (Apple Silicon recommended). Windows and Linux are on the roadmap, see [#21](https://github.com/rithulkamesh/sunday/issues/21).
 - [Bun](https://bun.sh), [Rust](https://rustup.rs) (stable), Xcode (the full app, not only the command line tools: it has the Metal compiler that MLX needs; skip MLX with `--no-default-features --features voice`).
-- [Ollama](https://ollama.com), running locally.
+- A model provider: [Ollama](https://ollama.com) (default), [LM Studio](https://lmstudio.ai), or MLX on Apple silicon. See [Providers](PROVIDERS.md).
 - Optional: `brew install poppler` to import PDFs.
 
-## Install and run
+## Install a release
+
+On a Mac with Apple silicon, this installs the latest release, fetches the models and needs no build tools:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rithulkamesh/sunday/main/scripts/install.sh | bash
+```
+
+It checks the download's checksum, clears Gatekeeper's quarantine flag and signs the app ad hoc on your machine (`codesign -s -`), because releases are not notarized with an Apple Developer ID. Models go to `~/.cache/sunday`; `SUNDAY_SKIP_MODELS=1` skips them. You still need a model provider ([Providers](PROVIDERS.md)). To build from source instead:
+
+## Install and run (from source)
 
 ```sh
 git clone git@github.com:rithulkamesh/sunday.git && cd sunday
-scripts/fetch-models.sh      # Silero VAD, wake word, Parakeet, Kokoro, voiceprint -> ~/.cache/sunday/models
-scripts/build-ocr.sh         # compiles scripts/ocr.swift (rerun after updates)
-ollama pull qwen3:4b-instruct
-ollama pull nomic-embed-text-v2-moe
-ollama pull qwen3-vl:4b-instruct   # only for diagrams and non-text screens
-bun install
+scripts/setup.sh             # models, OCR helper, routing model, bun install, and your Ollama models if it is running
 bun run tauri dev
 ```
+
+`setup.sh` is safe to rerun. Add `--vision` to also pull the vision model (diagrams and non-text screens), or `--no-router` to skip the optional routing model. It runs these, which you can also run one by one: `scripts/fetch-models.sh` (Silero VAD, wake word, Parakeet, Kokoro, voiceprint into `~/.cache/sunday/models`), `scripts/build-ocr.sh`, `scripts/fetch-router.sh` ([Router](ROUTER.md#install-it)), `ollama pull qwen3:4b-instruct`, `ollama pull nomic-embed-text-v2-moe`, `ollama pull qwen3-vl:4b-instruct`, `bun install`.
 
 To check your setup, `cd src-tauri && cargo test` needs nothing installed and takes about a second; `bun run test:live` runs the tests that need Ollama and the models ([Testing](TESTING.md)).
 

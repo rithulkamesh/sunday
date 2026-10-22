@@ -58,7 +58,9 @@ It runs as a separate program (`tools/laya-router`) rather than inside the app, 
 
 ### Install it
 
-Nothing downloads on its own, and the app works without it. To train, export and install your own, follow [scripts/laya/README.md](https://github.com/rithulkamesh/sunday/blob/main/scripts/laya/README.md). In short: generate data, fine-tune (about 3 hours on an M-series Mac), check against the held-out sets, export to ONNX, build the sidecar. When it loads, the log says `[laya] router ready`, then one line per question: `[laya] do 0.96 in 130ms -> do`.
+Nothing downloads on its own, and the app works without it. To install the published model, run `scripts/fetch-router.sh` (or `scripts/setup.sh`, which does). It downloads the weights from [Hugging Face](https://huggingface.co/rithulkamesh/sunday-laya-router) at a revision pinned in `scripts/laya/router.sha256`, checks every file's SHA-256, downloads the prebuilt sidecar from the matching GitHub release, and ad-hoc signs it on your machine (`codesign --sign -`, no developer account). Apple silicon only; elsewhere build it yourself. The weights are GPL-3.0-or-later like Sunday, built on Laya (Apache-2.0) and mmBERT (MIT).
+
+To train, export and install your own, follow [scripts/laya/README.md](https://github.com/rithulkamesh/sunday/blob/main/scripts/laya/README.md). In short: generate data, fine-tune (about 3 hours on an M-series Mac), check against the held-out sets, export to ONNX, build the sidecar. When it loads, the log says `[laya] router ready`, then one line per question: `[laya] do 0.96 in 130ms -> do`.
 
 ## Corrections teach it, at once
 
