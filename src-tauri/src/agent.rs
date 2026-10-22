@@ -830,23 +830,32 @@ mod live {
         assert!(yt.tool == "finish" || (yt.tool == "open_url" && yt.url.contains("youtube.com")), "the page is open, so the task is done: {yt:?}");
     }
 
-    /// Drives the real Safari: a refinement of the front page must change that tab, not add one. Needs Safari and Automation
-    /// permission for the terminal. Run with `bun run test:live tab_is_reused`.
+    /// Drives the real browsers (every one of Safari, Dia and Chrome that is installed) on YouTube: sorting the results must
+    /// change the front tab, not add one. Needs Automation permission for the terminal. Run with `bun run test:live tab_is_reused`.
     #[test]
-    #[ignore = "needs Safari and Automation permission; drives the real browser"]
+    #[ignore = "needs Safari, Dia or Chrome and Automation permission; drives the real browsers"]
     fn tab_is_reused_for_a_refinement() {
         let os = crate::platform::current();
-        let tabs = || std::process::Command::new("osascript").args(["-e", r#"tell application "Safari" to count tabs of front window"#]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().unwrap_or(0)).unwrap();
-        os.open_url("https://example.com/", Some("Safari")).unwrap();
-        std::thread::sleep(std::time::Duration::from_secs(3));
-        assert_eq!(browser_open().as_deref(), Some("Safari"), "Safari must be the front browser for this test");
-        let before = tabs();
-        let db = Db::open(&std::env::temp_dir().join(format!("sunday-tab-{}.db", std::process::id()))).unwrap();
-        let (look, locate) = (|_: &str| Ok(String::new()), |_: &str| Ok((0.0, 0.0)));
-        let step = Step { tool: "open_url".into(), url: "https://example.com/?sorted=1".into(), ..Step::default() };
-        exec(&db, &step, &Eyes { look: &look, locate: &locate }).unwrap();
-        std::thread::sleep(std::time::Duration::from_secs(2));
-        assert_eq!(tabs(), before, "a new tab was opened");
-        assert!(os.browser_url("Safari").unwrap().contains("sorted=1"), "the front tab did not change");
+        let (page, sorted) = ("https://www.youtube.com/results?search_query=machine+learning", "https://www.youtube.com/results?search_query=machine+learning&sp=CAM%253D");
+        for browser in ["Safari", "Dia", "Google Chrome"] {
+            if std::process::Command::new("open").args(["-Ra", browser]).status().map_or(true, |s| !s.success()) {
+                println!("{browser}: not installed, skipped");
+                continue;
+            }
+            let tabs = || {
+                let script = format!(r#"tell application "{browser}" to count tabs of front window"#);
+                std::process::Command::new("osascript").args(["-e", &script]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().unwrap_or(0)).unwrap()
+            };
+            os.open_url(page, Some(browser)).unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(4));
+            let (before, front) = (tabs(), os.browser_url(browser).unwrap());
+            assert!(same_host(&front, sorted), "{browser}: front tab is {front}");
+            os.navigate(sorted, browser).unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let now = os.browser_url(browser).unwrap();
+            println!("{browser}: tabs {before} -> {}, front tab now {now}", tabs());
+            assert_eq!(tabs(), before, "{browser}: a new tab was opened");
+            assert!(now.contains("sp=CAM"), "{browser}: the front tab did not change: {now}");
+        }
     }
 }
