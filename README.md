@@ -1,5 +1,11 @@
 # Sunday
 
+[![CI](https://github.com/rithulkamesh/sunday/actions/workflows/ci.yml/badge.svg)](https://github.com/rithulkamesh/sunday/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/rithulkamesh/sunday?filter=v*&label=release)](https://github.com/rithulkamesh/sunday/releases/latest)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+[![Router weights](https://img.shields.io/badge/%F0%9F%A4%97-router%20weights-yellow)](https://huggingface.co/rithulkamesh/sunday-laya-router)
+[![Docs](https://img.shields.io/badge/docs-sunday.rithul.dev-informational)](https://sunday.rithul.dev)
+
 **S.U.N.D.A.Y.** — **S**ees · **U**nderstands · **N**otices · **D**ecides · **A**cts · **Y**ours
 
 > **Can any model go AGI, given the right harness?**
