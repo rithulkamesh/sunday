@@ -14,6 +14,10 @@ title: Evals
 | `agent.jsonl` | the real agent loop, with scripted steps standing in for the model |
 | `injection.jsonl` | the agent resisting text from a page, the screen, memory or a file name |
 
+## Nightly run
+
+`.github/workflows/nightly-eval.yml` runs the suite every night and appends `{date, sha, passed, total}` to `history.jsonl` on the `eval-history` branch (with the full `latest.jsonl` and a `trend.md` table of the last 14 nights). The same table shows in the run summary.
+
 ## Router task
 
 ```json
