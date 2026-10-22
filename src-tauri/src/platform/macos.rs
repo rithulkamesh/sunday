@@ -41,6 +41,17 @@ impl Platform for Mac {
         }
     }
 
+    // The address travels as an argument, never inside the script.
+    fn navigate(&self, url: &str, browser: &str) -> Result<(), String> {
+        let target = match browser {
+            "Safari" => "front document",
+            "Google Chrome" | "Brave Browser" | "Microsoft Edge" | "Chromium" | "Vivaldi" | "Arc" | "Dia" => "active tab of front window",
+            b => return Err(format!("can't change a tab in {b}")),
+        };
+        let script = format!("on run argv\ntell application \"{browser}\" to set URL of {target} to (item 1 of argv)\nend run");
+        run("osascript", &["-e", &script, url])
+    }
+
     fn open_path(&self, path: &Path) -> Result<(), String> {
         run("open", &[path.to_string_lossy().as_ref()])
     }

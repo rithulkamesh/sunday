@@ -113,3 +113,28 @@ fn eval_suite() {
     }
     assert!(failed.is_empty(), "{} eval tasks failed", failed.len());
 }
+
+/// The real planner on the first step of every agent task, once per model in SUNDAY_COMPARE (comma separated; default: the
+/// planner model). Prints pass rate and median latency per model, so a config can be chosen on evidence (#16):
+/// `SUNDAY_COMPARE=qwen3:4b-instruct,qwen3-vl:4b-instruct bun run test:live planner_by_model`
+#[test]
+#[ignore = "needs Ollama with the models named in SUNDAY_COMPARE"]
+fn planner_by_model() {
+    let db = Db::open(&std::env::temp_dir().join(format!("sunday-compare-{}.db", std::process::id()))).unwrap();
+    let models: Vec<String> = std::env::var("SUNDAY_COMPARE").map(|v| v.split(',').map(|m| m.trim().to_string()).collect()).unwrap_or_else(|_| vec![crate::provider::planner_model(&db)]);
+    let tasks: Vec<Value> = load(&dir().join("agent.jsonl")).into_iter().filter(|t| t["plan"][0]["tool"].as_str().is_some_and(|x| x != "finish") && t["files"].is_null()).collect();
+    for model in models {
+        let plan = agent::model_plan(&model);
+        let (mut ms, mut pass) = (Vec::new(), 0);
+        for t in &tasks {
+            let want = &t["plan"][0];
+            let start = Instant::now();
+            let got = plan(&agent::State { task: t["task"].as_str().unwrap_or("").into(), ..Default::default() });
+            ms.push(start.elapsed().as_millis());
+            let ok = got.is_ok_and(|g| g.tool == want["tool"].as_str().unwrap_or("") && g.name.to_lowercase() == want["name"].as_str().unwrap_or("").to_lowercase());
+            pass += usize::from(ok);
+        }
+        ms.sort();
+        println!("{model}: {pass}/{} first steps right, median {} ms", tasks.len(), ms.get(ms.len() / 2).copied().unwrap_or(0));
+    }
+}

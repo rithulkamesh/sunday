@@ -281,7 +281,12 @@ fn exec(db: &Db, s: &Step, eyes: &Eyes) -> Result<String, String> {
     let os = crate::platform::current();
     match s.tool.as_str() {
         "open_app" => os.open_app(s.name.trim()).map(|_| "done".into()),
-        "open_url" => os.open_url(s.url.trim(), browser_open().as_deref()).map(|_| "done".into()),
+        "open_url" => {
+            let browser = browser_open();
+            // A refinement of the page in front changes that tab instead of piling up new ones.
+            let reused = browser.as_deref().is_some_and(|b| crate::web::browser_url(b).is_ok_and(|front| same_host(&front, &s.url)) && os.navigate(s.url.trim(), b).is_ok());
+            if reused { Ok("done".into()) } else { os.open_url(s.url.trim(), browser.as_deref()).map(|_| "done".into()) }
+        }
         "open_path" => os.open_path(&safe_path(&s.path)?).map(|_| "done".into()),
         "type_text" => os.type_text(s.text.trim()).map(|_| "done".into()),
         "press_keys" => os.press_keys(s.query.trim()).map(|_| "done".into()),
@@ -376,14 +381,15 @@ pub fn drive(db: &Db, st: &mut State, plan: &dyn Fn(&State) -> Res<Step>, eyes: 
             }
         }
         st.done.push(key);
-        let trusted = s.tool == "type_text" && typing_trusted(st, &s, crate::platform::current().frontmost_app());
+        let same_page = s.tool == "open_url" && db.last_opened_url(900).is_some_and(|last| same_host(&last, &s.url));
+        let trusted = same_page || s.tool == "type_text" && typing_trusted(st, &s, crate::platform::current().frontmost_app());
         if needs_yes(&s, st.tainted) && !trusted {
             let q = describe(&s);
             st.waiting = Some(s);
             save(db, st);
             return Ok(Out::Ask(q));
         }
-        observe(db, st, &s, eyes, if trusted { "own words" } else { "auto" });
+        observe(db, st, &s, eyes, if same_page { "same page" } else if trusted { "own words" } else { "auto" });
     }
 }
 
@@ -559,6 +565,14 @@ mod tests {
         let mut s = Step { tool: tool.into(), ..Step::default() };
         f(&mut s);
         s
+    }
+
+    #[test]
+    fn refinements_stay_on_the_host_of_the_page() {
+        assert!(same_host("https://www.youtube.com/results?search_query=ml", "https://www.youtube.com/results?search_query=ml&sp=CAM%253D"));
+        assert!(!same_host("https://www.youtube.com/results", "https://evil.example/results"));
+        assert!(!same_host("https://www.youtube.com/", "https://youtube.com.evil.example/"));
+        assert!(!same_host("not a url", "not a url"));
     }
 
     #[test]
