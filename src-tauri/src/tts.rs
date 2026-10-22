@@ -131,6 +131,8 @@ impl Speaker {
         let mut cfg = dev.default_output_config().ok()?.config();
         cfg.sample_rate = cpal::SampleRate(rate);
         cfg.channels = 1;
+        // Tests run the whole path (queue, timing, level) but stay silent unless SUNDAY_AUDIBLE is set.
+        let mute = cfg!(test) && std::env::var_os("SUNDAY_AUDIBLE").is_none();
         let stream = dev
             .build_output_stream(
                 &cfg,
@@ -140,6 +142,9 @@ impl Speaker {
                     let rms = (out.iter().map(|s| s * s).sum::<f32>() / out.len().max(1) as f32).sqrt();
                     let prev = playback_level();
                     PLAY_LEVEL.store((prev + 0.1 * (rms - prev)).to_bits(), Ordering::Relaxed);
+                    if mute {
+                        out.fill(0.0);
+                    }
                 },
                 |e| eprintln!("tts output error: {e}"),
                 None,
@@ -264,7 +269,7 @@ mod tests {
     }
 
     /// Plays the same sentence in a few voices and paces, so one can be picked by ear:
-    /// `cargo test speaks_aloud -- --ignored --nocapture`, then set SUNDAY_VOICE and SUNDAY_VOICE_SPEED (or the constants).
+    /// `SUNDAY_AUDIBLE=1 cargo test speaks_aloud -- --ignored --nocapture`, then set SUNDAY_VOICE and SUNDAY_VOICE_SPEED (or the constants).
     #[test]
     #[ignore = "needs the speech models from scripts/fetch-models.sh and a speaker"]
     fn speaks_aloud() {

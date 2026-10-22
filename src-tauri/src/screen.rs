@@ -410,6 +410,7 @@ pub fn locate(db: &Db, target: &str) -> Res<(f64, f64)> {
             "messages": [{"role": "system", "content": "You find things on a screenshot. Reply with the centre point (x, y, each 0 to 1000 from the top-left of the image) of the single item that best matches the description. If nothing visible matches, found is false."},
                 {"role": "user", "content": format!("Find: {target}"), "images": [seen.image]}]});
         let v: Value = ureq::post("http://localhost:11434/api/chat").timeout(std::time::Duration::from_secs(120)).send_json(&body)?.into_json()?;
+        rewarm(&crate::provider::planner_model(db));
         let p: Value = serde_json::from_str(v["message"]["content"].as_str().unwrap_or(""))?;
         match (p["found"].as_bool(), p["x"].as_f64(), p["y"].as_f64()) {
             (Some(true), Some(x), Some(y)) if (0.0..=1000.0).contains(&x) && (0.0..=1000.0).contains(&y) => Ok((x, y)),
@@ -488,6 +489,13 @@ fn preload(model: &str) {
     });
 }
 
+/// Ollama on a small Mac keeps only one of the vision and text models loaded, so a vision call unloads the text model the next
+/// step needs. Start loading it again now, while the user reads the answer or says yes, instead of inside the next step.
+fn rewarm(text_model: &str) {
+    let m = text_model.to_string();
+    std::thread::spawn(move || crate::provider::current().warm(&m));
+}
+
 fn look(model: &str, seen: &Seen, system: &str, user: &str) -> Res<Look> {
     // The line list plus the image need more than Ollama's default 4096-token context.
     let body = json!({"model": model, "stream": false, "think": false, "keep_alive": llm::KEEP_VISION, "format": schema(), "options": {"num_ctx": 8192},
@@ -544,6 +552,7 @@ fn analyse(full: &Path, context: &str, category: &str, region: Region, task: &st
     let t = std::time::Instant::now();
     let l = look(model, &seen, &system(), &prompt(task, context, &seen.lines))?;
     eprintln!("[perf] screen: vision answer in {:?}", t.elapsed());
+    rewarm(text_model);
     let marks: Vec<Mark> = sanitize(l.marks, &seen.lines).iter().map(|m| region.to_display(m)).collect();
     let first = Explained { text: l.explanation.trim().to_string(), marks, spoken: false };
 
