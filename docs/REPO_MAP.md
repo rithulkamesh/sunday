@@ -51,6 +51,7 @@ Every utterance becomes exactly one `Action` before anything runs. `Rules` is th
 | `main.rs` | App setup, Tauri commands, hotkeys, and wiring of the audio, speech and model threads |
 | `llm.rs` | The turn loop: routes an `Action`, builds the prompt with memory and note context, calls the chosen provider (chat, vision, embeddings, JSON-schema output), runs skills, ends sessions. Chat replies that claim a computer action are replaced with an honest line |
 | `provider.rs` | The `Provider` trait and its implementations: Ollama, MLX (in process), OpenAI-compatible, Anthropic, Gemini, Amazon Nova. Per-role settings (chat, planner), keys in the OS keychain, the conformance checks and their mock servers |
+| `applefm.rs` | The Apple Foundation Models provider: runs the `scripts/applefm.swift` helper per call (macOS 26) |
 | `mlx.rs` | The in-process MLX provider for Apple Silicon (no Ollama) |
 | `decision.rs` | `Action` enum, `Decider` trait, `Rules` router, `permitted()` |
 | `laya.rs` | The optional routing model: talks to the `tools/laya-router` program over stdin and stdout, builds the state text it was trained on, and applies the confidence gate (screen needs the most). Does nothing unless the model and program are installed |
@@ -95,6 +96,7 @@ Every utterance becomes exactly one `Action` before anything runs. `Rules` is th
 | `docs/`, `website/` | These docs and the site that serves them (Docusaurus, Mermaid diagrams) |
 | `.github/workflows/` | `ci.yml` (tests, frontend types) and `docs.yml` (site build and deploy) |
 | `scripts/fetch-models.sh` | Download VAD, wake word, speaker-ID, Parakeet and Kokoro into `~/.cache/sunday/models` |
+| `scripts/build-applefm.sh` | Compile the Apple on-device model helper |
 | `scripts/fetch-mlx-model.sh`, `scripts/fetch-embed-model.sh` | Download an MLX chat model, or the on-device embedding model |
 | `scripts/build-laya.sh`, `scripts/laya/`, `tools/laya-router/` | The routing model: build and install the sidecar program, and generate data, fine-tune, check, and export the model ([scripts/laya/README.md](https://github.com/rithulkamesh/sunday/blob/main/scripts/laya/README.md)) |
 | `scripts/build-ocr.sh`, `scripts/ocr.swift` | macOS Vision OCR helper: exact text line boxes, window list, cropping, the clicker |

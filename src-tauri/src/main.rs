@@ -2,6 +2,8 @@
 //! A normal dock app: closing the main window hides it, only Quit (dock/tray/cmd+q) exits.
 
 mod agent;
+#[cfg(feature = "voice")]
+mod applefm;
 mod bargein;
 mod mic;
 #[cfg(feature = "voice")]
