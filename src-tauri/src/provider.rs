@@ -91,9 +91,10 @@ pub struct Info {
     pub suggested_model: &'static str,
 }
 
-pub const CATALOG: [Info; 8] = [
+pub const CATALOG: [Info; 9] = [
     Info { id: "ollama", label: "Ollama", local: true, key_var: None, conf: None, suggested_model: crate::llm::MODEL },
     Info { id: "mlx", label: "MLX (on this Mac)", local: true, key_var: None, conf: None, suggested_model: "mlx-community/Qwen3-4B-Instruct-2507-4bit" },
+    Info { id: "applefm", label: "Apple Intelligence (on this Mac)", local: true, key_var: None, conf: None, suggested_model: crate::applefm::MODEL },
     Info { id: "openai", label: "OpenAI-compatible", local: false, key_var: Some("OPENAI_API_KEY"), conf: Some(("OPENAI_BASE_URL", "Server address", "https://api.openai.com/v1")), suggested_model: "gpt-4o-mini" },
     Info { id: "lmstudio", label: "LM Studio", local: true, key_var: None, conf: Some(("LMSTUDIO_BASE_URL", "Server address", "http://localhost:1234/v1")), suggested_model: "qwen3-4b-instruct-2507" },
     Info { id: "openrouter", label: "OpenRouter", local: false, key_var: Some("OPENROUTER_API_KEY"), conf: None, suggested_model: "openai/gpt-4o-mini" },
@@ -258,6 +259,7 @@ fn build(name: &str, get: &dyn Fn(&str) -> Option<String>) -> Box<dyn Provider> 
     match name {
         "ollama" => Box::new(Ollama),
         "mlx" => mlx(),
+        "applefm" => Box::new(crate::applefm::AppleFm::new()),
         "openai" => Box::new(OpenAi { base: get("OPENAI_BASE_URL").unwrap_or_else(|| "https://api.openai.com/v1".into()), key: key("OPENAI_API_KEY") }),
         "lmstudio" => Box::new(OpenAi { base: get("LMSTUDIO_BASE_URL").unwrap_or_else(|| "http://localhost:1234/v1".into()), key: String::new() }),
         "openrouter" => Box::new(OpenAi { base: "https://openrouter.ai/api/v1".into(), key: key("OPENROUTER_API_KEY") }),
@@ -630,7 +632,7 @@ mod conformance {
     #[test]
     fn provider_choice() {
         let get = |_: &str| None;
-        for (n, want) in [("ollama", "ollama"), ("mlx", "mlx"), ("bogus", "ollama"), ("openai", "openai"), ("gemini", "openai"), ("lmstudio", "openai"), ("openrouter", "openai"), ("anthropic", "anthropic"), ("nova", "nova")] {
+        for (n, want) in [("ollama", "ollama"), ("mlx", "mlx"), ("applefm", "applefm"), ("bogus", "ollama"), ("openai", "openai"), ("gemini", "openai"), ("lmstudio", "openai"), ("openrouter", "openai"), ("anthropic", "anthropic"), ("nova", "nova")] {
             assert_eq!(build(n, &get).name(), want, "{n}");
         }
         // LM Studio is local and keyless; its address is the one setting.

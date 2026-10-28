@@ -29,6 +29,7 @@ Prefer environment variables? They win over saved settings, which is handy for C
 | Provider | Key variable | Other settings |
 |---|---|---|
 | `ollama` | none | runs on `localhost:11434` |
+| `applefm` (Apple Intelligence, on this Mac) | none | macOS 26 with Apple Intelligence on. One model, `apple-on-device`. Build the helper once with `scripts/build-applefm.sh` |
 | `mlx` (on this Mac, no Ollama) | none | Apple Silicon only. Model is a Hugging Face id such as `mlx-community/Qwen3-4B-Instruct-2507-4bit`; get it with `scripts/fetch-mlx-model.sh <id>` |
 | `lmstudio` (local) | none | `LMSTUDIO_BASE_URL`, default `http://localhost:1234/v1` |
 | `openrouter` | `OPENROUTER_API_KEY` | model ids look like `openai/gpt-4o-mini` |
@@ -42,6 +43,16 @@ Prefer environment variables? They win over saved settings, which is handy for C
 ## LM Studio
 
 Start the local server in LM Studio (Developer tab, default port 1234), load a model, then pick **LM Studio** in **Settings → Models → Change**. The model list comes from the server. Prompts stay on your machine. Use an instruct build, not a thinking one, and one that supports structured output so the planner's JSON schema is honoured. Embeddings and vision still use Ollama or the on-device embedder.
+
+## Apple's on-device model
+
+On a Mac with Apple Intelligence (macOS 26), Sunday can chat with the system model: nothing to download and prompts never leave the Mac. Build the small Swift helper once, then pick **Apple Intelligence (on this Mac)** in **Settings → Models → Change**:
+
+```bash
+scripts/build-applefm.sh
+```
+
+Like MLX it can't constrain output to a JSON schema, so the schema goes in the prompt. Its context window is small, so it suits chat better than planning long tasks.
 
 ## Run without Ollama (MLX)
 
