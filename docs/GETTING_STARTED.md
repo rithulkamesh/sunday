@@ -71,12 +71,12 @@ Want a different voice or pace? Start with `SUNDAY_VOICE=8 SUNDAY_VOICE_SPEED=1.
 
 | You want to… | Start in |
 |---|---|
-| Change how requests are routed | `src-tauri/src/decision.rs` (`Action`, `Rules`), `laya.rs` and `corrections.rs`; see [Router](ROUTER.md) |
-| Add or change something Sunday can *do* | `src-tauri/src/agent.rs` (`TOOLS`, `POLICY`, `check`, `exec`, `verify`), and the OS call in `src-tauri/src/platform/` |
-| Change prompts, turn handling, the model call | `src-tauri/src/llm.rs` |
-| Memory, facts, embeddings | `src-tauri/src/memory.rs`, `db.rs` |
-| Skills | `src-tauri/src/skills.rs` |
-| Screen, OCR, overlay | `src-tauri/src/screen.rs`, `scripts/ocr.swift` |
+| Change how requests are routed | `src-tauri/src/brain/decision.rs` (`Action`, `Rules`), `brain/laya.rs` and `brain/corrections.rs`; see [Router](ROUTER.md) |
+| Add or change something Sunday can *do* | `src-tauri/src/tools/agent.rs` (`TOOLS`, `POLICY`, `check`, `exec`, `verify`), and the OS call in `src-tauri/src/platform/` |
+| Change prompts, turn handling, the model call | `src-tauri/src/brain/llm.rs` |
+| Memory, facts, embeddings | `src-tauri/src/store/memory.rs`, `store/db.rs` |
+| Skills | `src-tauri/src/brain/skills.rs` |
+| Screen, OCR, overlay | `src-tauri/src/tools/screen.rs`, `scripts/ocr.swift` |
 | UI | `src/*.tsx` |
 
 Full module map: [REPO_MAP.md](REPO_MAP.md). How the pieces behave together: [Architecture](ARCHITECTURE.md).

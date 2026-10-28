@@ -1,8 +1,8 @@
 //! macOS: `open`, AppleScript, `screencapture`, `sips`, CoreGraphics, and the Swift helper that scripts/build-ocr.sh
 //! builds (text reader, window list, cropper, clicker). This is the only file that names those tools.
 use super::Platform;
-use crate::llm::{Res, UserMsg};
-use crate::screen::{Desk, Line, Region};
+use crate::brain::llm::{Res, UserMsg};
+use crate::tools::screen::{Desk, Line, Region};
 use std::path::{Path, PathBuf};
 use tauri::WebviewWindow;
 
@@ -11,7 +11,7 @@ pub const OS: Mac = Mac;
 
 /// scripts/build-ocr.sh puts the helper (text reader, window list, cropper) next to the models directory.
 fn tool() -> Option<PathBuf> {
-    let p = crate::models::dir().parent()?.join("bin/ocr");
+    let p = crate::voice::models::dir().parent()?.join("bin/ocr");
     p.exists().then_some(p)
 }
 

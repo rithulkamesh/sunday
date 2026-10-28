@@ -3,8 +3,8 @@
 //! behaviour. Callers use `current()` and never name a tool. macOS is the only real implementation today
 //! (`macos.rs`); every other OS gets `unsupported.rs`, whose calls fail with a message fit to be spoken. Adding
 //! Windows or Linux means writing one file that implements `Platform`.
-use crate::llm::Res;
-use crate::screen::{Desk, Line, Region};
+use crate::brain::llm::Res;
+use crate::tools::screen::{Desk, Line, Region};
 use std::path::Path;
 
 #[cfg(target_os = "macos")]
@@ -91,7 +91,7 @@ pub fn parse_combo(combo: &str) -> Result<(Vec<&'static str>, char), String> {
 
 pub fn current() -> &'static dyn Platform {
     #[cfg(test)]
-    if crate::agent::sandbox::on() {
+    if crate::tools::agent::sandbox::on() {
         return &Recorder;
     }
     &imp::OS
@@ -155,7 +155,7 @@ impl Platform for Recorder {
 
 #[cfg(test)]
 fn note(effect: String) -> Result<(), String> {
-    crate::agent::sandbox::record(effect);
+    crate::tools::agent::sandbox::record(effect);
     Ok(())
 }
 
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn the_sandbox_records_instead_of_acting() {
-        let ((), sb) = crate::agent::sandbox::run(crate::agent::sandbox::Sandbox::default(), || {
+        let ((), sb) = crate::tools::agent::sandbox::run(crate::tools::agent::sandbox::Sandbox::default(), || {
             current().open_app("Safari").unwrap();
             current().click(500.0, 250.0).unwrap();
         });

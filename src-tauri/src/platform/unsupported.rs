@@ -1,7 +1,7 @@
 //! Every OS without a real implementation yet. Nothing here acts; each call says so in words that can be spoken.
 use super::Platform;
-use crate::llm::{Res, UserMsg};
-use crate::screen::{Desk, Line, Region};
+use crate::brain::llm::{Res, UserMsg};
+use crate::tools::screen::{Desk, Line, Region};
 use std::path::Path;
 use tauri::WebviewWindow;
 

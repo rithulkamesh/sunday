@@ -2,8 +2,8 @@
 //! (svc/memory): each fact is one self-contained sentence with where it came from, how confident the
 //! extraction was and when it refers to, stored with an embedding and searched by similarity.
 //! Here it runs locally: SQLite for storage, Ollama or the on-device MiniLM model for embeddings.
-use crate::db::{Db, Fact, NewFact};
-use crate::speaker::cosine;
+use crate::store::db::{Db, Fact, NewFact};
+use crate::voice::speaker::cosine;
 use std::sync::atomic::{AtomicBool, Ordering};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -37,7 +37,7 @@ pub fn relevant() -> f32 {
 
 pub fn embed_model() -> String {
     if local() {
-        return crate::localembed::NAME.into();
+        return crate::providers::localembed::NAME.into();
     }
     std::env::var("SUNDAY_EMBED").unwrap_or_else(|_| EMBED_MODEL.into())
 }
@@ -55,13 +55,13 @@ pub fn embed(texts: &[String], query: bool) -> Res<Vec<Vec<f32>>> {
 /// `embed` with the embedder named, so Settings can try one before switching to it.
 pub fn embed_via(local: bool, texts: &[String], query: bool) -> Res<Vec<Vec<f32>>> {
     if local {
-        return crate::localembed::embed(texts);
+        return crate::providers::localembed::embed(texts);
     }
     let prefix = if query { "search_query: " } else { "search_document: " };
     let input: Vec<String> = texts.iter().map(|t| format!("{prefix}{t}")).collect();
     let v: Value = ureq::post("http://localhost:11434/api/embed")
         .timeout(std::time::Duration::from_secs(60))
-        .send_json(json!({"model": embed_model(), "input": input, "keep_alive": crate::llm::KEEP_TEXT}))?
+        .send_json(json!({"model": embed_model(), "input": input, "keep_alive": crate::brain::llm::KEEP_TEXT}))?
         .into_json()?;
     let out: Vec<Vec<f32>> = v["embeddings"]
         .as_array()
@@ -132,7 +132,7 @@ fn schema() -> Value {
 
 /// Facts the model finds in `text`; `system` says what to look for.
 fn extract_with(model: &str, system: &str, text: &str) -> Res<Vec<Extracted>> {
-    let e: Extraction = crate::llm::json(model, system, text, schema(), 180)?;
+    let e: Extraction = crate::brain::llm::json(model, system, text, schema(), 180)?;
     Ok(clean(e.facts))
 }
 
@@ -238,7 +238,7 @@ pub fn recall(db: &Db, q: &str, k: usize) -> Vec<Fact> {
 }
 
 fn keyword_scores(db: &Db, q: &str) -> Vec<(i64, f32)> {
-    let terms = crate::notes::terms(q);
+    let terms = crate::store::notes::terms(q);
     if terms.is_empty() {
         return vec![];
     }
@@ -305,7 +305,7 @@ mod tests {
         let page = "The Banker's algorithm, devised by Edsger Dijkstra, avoids deadlock by granting a resource request only if the system stays in a safe state. \
             A state is safe if some ordering of the processes lets each one finish with the resources that are available. \
             The algorithm needs each process to declare its maximum resource demand in advance. It runs in O(m n^2) time for m resource types and n processes.";
-        let model = crate::llm::model_name(&db);
+        let model = crate::brain::llm::model_name(&db);
         let t = std::time::Instant::now();
         let (added, dup) = learn_page(&db, &model, "https://example.com/banker", "Banker's algorithm", page);
         println!("learned {added} facts ({dup} duplicates) in {:?}", t.elapsed());

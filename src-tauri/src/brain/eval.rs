@@ -4,9 +4,9 @@
 //! Tasks are data, see `evals/README.md`. Router tasks (`say`) and agent tasks (`plan`) need no model; model-backed
 //! tasks plug into `run_task`. Agent tasks run in `agent::sandbox`: a fresh fake home folder, a canned web, scripted
 //! steps in place of the model, and nothing that would touch the real machine; every task runs twice and must agree.
-use crate::agent::{self, sandbox, Out, Step};
-use crate::db::Db;
-use crate::decision::{Decider, Rules};
+use crate::tools::agent::{self, sandbox, Out, Step};
+use crate::store::db::Db;
+use crate::brain::decision::{Decider, Rules};
 use serde_json::{json, Value};
 use std::{fs, path::PathBuf, time::Instant};
 
@@ -121,7 +121,7 @@ fn eval_suite() {
 #[ignore = "needs Ollama with the models named in SUNDAY_COMPARE"]
 fn planner_by_model() {
     let db = Db::open(&std::env::temp_dir().join(format!("sunday-compare-{}.db", std::process::id()))).unwrap();
-    let models: Vec<String> = std::env::var("SUNDAY_COMPARE").map(|v| v.split(',').map(|m| m.trim().to_string()).collect()).unwrap_or_else(|_| vec![crate::provider::planner_model(&db)]);
+    let models: Vec<String> = std::env::var("SUNDAY_COMPARE").map(|v| v.split(',').map(|m| m.trim().to_string()).collect()).unwrap_or_else(|_| vec![crate::providers::provider::planner_model(&db)]);
     let tasks: Vec<Value> = load(&dir().join("agent.jsonl")).into_iter().filter(|t| t["plan"][0]["tool"].as_str().is_some_and(|x| x != "finish") && t["files"].is_null()).collect();
     for model in models {
         let plan = agent::model_plan(&model);

@@ -3,7 +3,7 @@
 //! with the route the second one took; the next time something close to it comes up, that route is used. Examples live
 //! in the local `route_examples` table, and a retrained model (issue #56) can use the same rows.
 //! It only picks a route, like the rest of the router: permissions and approvals are unchanged.
-use crate::db::{now, Db};
+use crate::store::db::{now, Db};
 use serde::{Deserialize, Serialize};
 
 /// A correction counts only soon after the turn it corrects.
@@ -33,17 +33,17 @@ pub fn is_correction(cur: &str) -> bool {
 
 /// The remembered example closest to `emb` in the same context, if it is close enough: (route, similarity).
 fn closest(examples: &[(i64, String, String, String, Vec<f32>)], last: &str, emb: &[f32]) -> Option<(String, f32)> {
-    examples.iter().filter(|e| e.1 == last).map(|e| (e.3.clone(), crate::memory::sim(&e.4, emb))).filter(|(_, s)| *s >= SAME).max_by(|a, b| a.1.total_cmp(&b.1))
+    examples.iter().filter(|e| e.1 == last).map(|e| (e.3.clone(), crate::store::memory::sim(&e.4, emb))).filter(|(_, s)| *s >= SAME).max_by(|a, b| a.1.total_cmp(&b.1))
 }
 
 fn embedding(text: &str) -> Option<Vec<f32>> {
-    crate::memory::embed(&[text.to_string()], true).ok()?.pop()
+    crate::store::memory::embed(&[text.to_string()], true).ok()?.pop()
 }
 
 /// Stores `text` (said after `last`) as an example of `route`, replacing any example it contradicts.
 fn remember_with(db: &Db, last: &str, text: &str, route: &str, emb: &[f32]) {
     for (id, l, _, _, e) in db.route_examples() {
-        if l == last && crate::memory::sim(&e, emb) >= SUPERSEDE {
+        if l == last && crate::store::memory::sim(&e, emb) >= SUPERSEDE {
             db.route_example_delete(id);
         }
     }

@@ -181,7 +181,7 @@ pub fn fetch(address: &str) -> Result<Page, String> {
 /// The paragraphs of `text` most relevant to `q` (by shared words), kept in reading order, up to `max` chars.
 /// Readability output is one long line, so this works on sentence-aligned pieces of about 300 characters.
 pub fn snippet(text: &str, q: &str, max: usize) -> String {
-    let terms = crate::notes::terms(q);
+    let terms = crate::store::notes::terms(q);
     let (mut pieces, mut cur): (Vec<String>, String) = (Vec::new(), String::new());
     for sentence in text.split_inclusive(['.', '!', '?']) {
         cur.push_str(sentence);

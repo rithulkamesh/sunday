@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Label } from "./ui";
+import { Label } from "../ui";
 
 type Fact = { id: number; ts: number; kind: "user" | "web" | "chat"; source: string; title: string; text: string; confidence: number; event_date: string; score: number };
 

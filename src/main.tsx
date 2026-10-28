@@ -1,9 +1,9 @@
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./index.css";
-import { Hud } from "./Hud";
-import { Overlay } from "./Overlay";
-import { Workspace } from "./Workspace";
+import { Hud } from "./windows/Hud";
+import { Overlay } from "./windows/Overlay";
+import { Workspace } from "./windows/Workspace";
 
 const label = getCurrentWindow().label;
 // The HUD and the screen overlay are transparent; the workspace paints its own background.

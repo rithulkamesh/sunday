@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Knowledge, importNotes } from "./Knowledge";
-import { Memory } from "./Memory";
-import { Palette, type Cmd, type View } from "./Palette";
-import { Settings } from "./Settings";
-import { Skills } from "./Skills";
-import { Label } from "./ui";
+import { Knowledge, importNotes } from "../views/Knowledge";
+import { Memory } from "../views/Memory";
+import { Palette, type Cmd, type View } from "../views/Palette";
+import { Settings } from "../views/Settings";
+import { Skills } from "../views/Skills";
+import { Label } from "../ui";
 
 type Msg = { role: "user" | "assistant"; text: string; sources?: string[] };
 type State = {

@@ -1,5 +1,5 @@
 //! Kokoro TTS (sherpa-onnx) played through the default output device.
-use crate::models::path;
+use crate::voice::models::path;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use sherpa_onnx::{
     GenerationConfig, OfflineTts, OfflineTtsConfig, OfflineTtsKokoroModelConfig,

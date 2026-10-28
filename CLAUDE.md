@@ -11,10 +11,10 @@ Local-first personal agent. Tauri 2: Rust backend in `src-tauri/src`, React 19 f
 
 ## Where things live
 
-- Routing: `decision.rs` (`Action`, `Rules`). Every utterance becomes exactly one `Action`.
-- Acting: `agent.rs`. New tool = add to `TOOLS`, `POLICY` (its tier: read / reversible / confirm; a test fails without it), `Step`, `check` (safety), `describe`, `exec`, plus a test in the `tests` module.
-- Model calls: `llm.rs`. Ollama only today; provider abstraction is being built (see issues labelled `providers`).
-- Storage: `db.rs` (SQLite, `CREATE TABLE IF NOT EXISTS` migrations inline).
+- Routing: `brain/decision.rs` (`Action`, `Rules`). Every utterance becomes exactly one `Action`.
+- Acting: `tools/agent.rs`. New tool = add to `TOOLS`, `POLICY` (its tier: read / reversible / confirm; a test fails without it), `Step`, `check` (safety), `describe`, `exec`, plus a test in the `tests` module.
+- Model calls: `brain/llm.rs`, backends in `providers/`. Ollama only today; provider abstraction is being built (see issues labelled `providers`).
+- Storage: `store/db.rs` (SQLite, `CREATE TABLE IF NOT EXISTS` migrations inline).
 
 ## Rules
 

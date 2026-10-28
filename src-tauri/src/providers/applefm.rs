@@ -3,8 +3,8 @@
 //! scripts/build-applefm.sh compiles (the framework is Swift only). Each call starts it, writes
 //! `{"system","prompt"}` on stdin and reads the reply from stdout. A schema goes in the prompt and `json_part` cuts
 //! the JSON out, as with MLX.
-use crate::llm::{Res, UserMsg};
-use crate::provider::{split, Provider};
+use crate::brain::llm::{Res, UserMsg};
+use crate::providers::provider::{split, Provider};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ pub struct AppleFm {
 
 impl AppleFm {
     pub fn new() -> AppleFm {
-        AppleFm::at(crate::models::dir().join("../bin/applefm"))
+        AppleFm::at(crate::voice::models::dir().join("../bin/applefm"))
     }
 
     pub fn at(bin: PathBuf) -> AppleFm {

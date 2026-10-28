@@ -1,6 +1,6 @@
 //! Teaching and practice, for any subject: the prompts, what the model must return, a learning plan built on demand,
 //! and what the user's words mean.
-use crate::db::Verdict;
+use crate::store::db::Verdict;
 use serde::Deserialize;
 use serde_json::{json, Value};
 

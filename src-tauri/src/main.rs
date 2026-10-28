@@ -1,51 +1,23 @@
 //! Sunday: hold fn or say "sunday" -> HUD pill at the bottom of the screen.
 //! A normal dock app: closing the main window hides it, only Quit (dock/tray/cmd+q) exits.
 
-mod agent;
-#[cfg(feature = "voice")]
-mod applefm;
-mod bargein;
-mod mic;
-#[cfg(feature = "voice")]
-mod db;
-#[cfg(feature = "voice")]
-mod decision;
-#[cfg(all(test, feature = "voice"))]
-mod eval;
-#[cfg(all(feature = "voice", feature = "mlx", target_os = "macos"))]
-mod mlx;
+mod brain;
 #[cfg(feature = "voice")]
 mod platform;
+mod providers;
+mod store;
+mod tools;
+mod voice;
+
+use voice::{bargein, mic};
 #[cfg(feature = "voice")]
-mod screen;
-#[cfg(feature = "voice")]
-mod skills;
-#[cfg(feature = "voice")]
-mod llm;
-#[cfg(feature = "voice")]
-mod provider;
-#[cfg(feature = "voice")]
-mod notes;
-#[cfg(feature = "voice")]
-mod memory;
-#[cfg(feature = "voice")]
-mod localembed;
-#[cfg(feature = "voice")]
-mod laya;
-#[cfg(feature = "voice")]
-mod corrections;
-#[cfg(feature = "voice")]
-mod models;
-#[cfg(feature = "voice")]
-mod speaker;
-#[cfg(feature = "voice")]
-mod learn;
-#[cfg(feature = "voice")]
-mod stt;
-#[cfg(feature = "voice")]
-mod tts;
-#[cfg(feature = "voice")]
-mod web;
+use {
+    brain::{llm, skills},
+    providers::{localembed, provider},
+    store::{db, memory, notes},
+    tools::web,
+    voice::{models, speaker, stt, tts},
+};
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

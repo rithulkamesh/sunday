@@ -29,8 +29,8 @@ impl Route {
 }
 
 /// The action a route stands for, for an utterance `Rules` had no pattern for.
-pub fn action_for(route: &str, text: &str) -> Option<crate::decision::Action> {
-    use crate::decision::Action;
+pub fn action_for(route: &str, text: &str) -> Option<crate::brain::decision::Action> {
+    use crate::brain::decision::Action;
     match route {
         "screen" => Some(Action::Screen(text.to_string())),
         "do" => Some(Action::Do(text.to_string())),
@@ -108,7 +108,7 @@ fn command() -> Option<Command> {
     if std::env::var("SUNDAY_ROUTER").as_deref() == Ok("rules") {
         return None;
     }
-    let models = crate::models::dir();
+    let models = crate::voice::models::dir();
     let (bin, model) = (models.parent()?.join("bin/laya-router"), models.join("laya-routing"));
     (bin.exists() && model.join("model.onnx").exists()).then(|| {
         let mut c = Command::new(bin);
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     #[ignore = "needs the routing model and sidecar (scripts/laya/export.sh, scripts/build-laya.sh)"]
     fn router_end_to_end_on_the_held_out_sets() {
-        use crate::decision::{Action, Decider, Rules};
+        use crate::brain::decision::{Action, Decider, Rules};
         let mut side = Sidecar::spawn(&mut command().expect("sidecar or model not installed")).unwrap();
         assert!(side.ask(&state(None, "", "hello"), Duration::from_secs(120)).is_some(), "the sidecar didn't start");
         for name in ["proto", "real"] {
