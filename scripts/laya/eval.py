@@ -1,6 +1,6 @@
 """Scores a checkpoint on the held-out sets. Usage: python eval.py <checkpoint dir | base> [work dir]
 Prints raw accuracy, and accuracy of the policy the app uses: the model overrides "chat" only when it is sure enough
-(the thresholds in src-tauri/src/laya.rs), otherwise the answer stays chat."""
+(the thresholds in src-tauri/src/brain/laya.rs), otherwise the answer stays chat."""
 import pathlib
 import sys
 
@@ -8,7 +8,7 @@ import laya
 
 from lib import ROOT, ROUTES, load_cases, norm, state, QUESTION
 
-# Keep in step with MIN in src-tauri/src/laya.rs.
+# Keep in step with MIN in src-tauri/src/brain/laya.rs.
 MIN = {"screen": 0.90, "do": 0.80, "research": 0.85}
 
 

@@ -1,10 +1,10 @@
 //! Where text-model calls go. `Provider` is the seam for other backends. Ollama is the default and the only one
 //! that stays on this machine; the others are chosen with SUNDAY_PROVIDER (see `from_env`) and send prompts to a
 //! remote API. Embeddings and the vision model (`screen.rs`) still talk to Ollama directly.
-use crate::llm::{Res, UserMsg, KEEP_TEXT};
+use crate::brain::llm::{Res, UserMsg, KEEP_TEXT};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader};
-use crate::db::Db;
+use crate::store::db::Db;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -64,7 +64,7 @@ pub fn ollama_models() -> Vec<String> {
 
 /// Rebuilds both providers from Settings. Call at startup and after any Settings change.
 pub fn configure(db: &Db) {
-    crate::memory::set_local(db.kv_get("embed").as_deref() == Some("local"));
+    crate::store::memory::set_local(db.kv_get("embed").as_deref() == Some("local"));
     *ROLES.write().unwrap() = Some(roles(&|k| db.kv_get(k), std::env::var("SUNDAY_PROVIDER").ok(), &resolver(db)));
 }
 
@@ -92,9 +92,9 @@ pub struct Info {
 }
 
 pub const CATALOG: [Info; 9] = [
-    Info { id: "ollama", label: "Ollama", local: true, key_var: None, conf: None, suggested_model: crate::llm::MODEL },
+    Info { id: "ollama", label: "Ollama", local: true, key_var: None, conf: None, suggested_model: crate::brain::llm::MODEL },
     Info { id: "mlx", label: "MLX (on this Mac)", local: true, key_var: None, conf: None, suggested_model: "mlx-community/Qwen3-4B-Instruct-2507-4bit" },
-    Info { id: "applefm", label: "Apple Intelligence (on this Mac)", local: true, key_var: None, conf: None, suggested_model: crate::applefm::MODEL },
+    Info { id: "applefm", label: "Apple Intelligence (on this Mac)", local: true, key_var: None, conf: None, suggested_model: crate::providers::applefm::MODEL },
     Info { id: "openai", label: "OpenAI-compatible", local: false, key_var: Some("OPENAI_API_KEY"), conf: Some(("OPENAI_BASE_URL", "Server address", "https://api.openai.com/v1")), suggested_model: "gpt-4o-mini" },
     Info { id: "lmstudio", label: "LM Studio", local: true, key_var: None, conf: Some(("LMSTUDIO_BASE_URL", "Server address", "http://localhost:1234/v1")), suggested_model: "qwen3-4b-instruct-2507" },
     Info { id: "openrouter", label: "OpenRouter", local: false, key_var: Some("OPENROUTER_API_KEY"), conf: None, suggested_model: "openai/gpt-4o-mini" },
@@ -150,14 +150,14 @@ pub fn secret_clear(var: &str) -> Result<(), String> {
 
 /// Everything Settings shows. Keys are never sent to the UI, only whether one is set.
 pub fn settings(db: &Db) -> Value {
-    let chat_model = crate::llm::model_name(db);
+    let chat_model = crate::brain::llm::model_name(db);
     let role = |r: &str, model: String| json!({"provider": db.kv_get(&format!("provider.{r}")), "model": model});
     json!({
         "roles": {
             "chat": {"provider": db.kv_get("provider.chat").or_else(|| std::env::var("SUNDAY_PROVIDER").ok()).unwrap_or_else(|| "ollama".into()), "model": chat_model},
             "planner": role("planner", planner_model(db)),
         },
-        "embed": {"provider": if crate::memory::local() { "local" } else { "ollama" }, "model": crate::memory::embed_model(), "local_installed": crate::localembed::installed()},
+        "embed": {"provider": if crate::store::memory::local() { "local" } else { "ollama" }, "model": crate::store::memory::embed_model(), "local_installed": crate::providers::localembed::installed()},
         "providers": CATALOG.iter().map(|i| json!({
             "id": i.id, "label": i.label, "local": i.local, "suggested_model": i.suggested_model,
             "key_var": i.key_var,
@@ -169,7 +169,7 @@ pub fn settings(db: &Db) -> Value {
 }
 
 pub fn planner_model(db: &Db) -> String {
-    db.kv_get("planner_model").unwrap_or_else(|| crate::llm::model_name(db))
+    db.kv_get("planner_model").unwrap_or_else(|| crate::brain::llm::model_name(db))
 }
 
 /// Saves a role's provider and model, then applies them. The planner's provider is stored only once chosen, so it
@@ -210,7 +210,7 @@ pub fn set_embedder(db: &Db, id: &str) -> Result<(), String> {
     if !["ollama", "local"].contains(&id) {
         return Err(format!("unknown embedder {id}"));
     }
-    crate::memory::embed_via(id == "local", &["hello".to_string()], true).map_err(|e| e.to_string())?;
+    crate::store::memory::embed_via(id == "local", &["hello".to_string()], true).map_err(|e| e.to_string())?;
     db.kv_set("embed", id);
     configure(db);
     Ok(())
@@ -227,7 +227,7 @@ pub fn test(db: &Db, id: &str, model: &str) -> Result<Value, String> {
 
 #[cfg(all(feature = "mlx", target_os = "macos"))]
 fn mlx() -> Box<dyn Provider> {
-    Box::new(crate::mlx::Mlx::new())
+    Box::new(crate::providers::mlx::Mlx::new())
 }
 
 /// MLX runs on Apple Silicon only, in builds that include it. Elsewhere the choice is offered but says why it can't work.
@@ -259,7 +259,7 @@ fn build(name: &str, get: &dyn Fn(&str) -> Option<String>) -> Box<dyn Provider> 
     match name {
         "ollama" => Box::new(Ollama),
         "mlx" => mlx(),
-        "applefm" => Box::new(crate::applefm::AppleFm::new()),
+        "applefm" => Box::new(crate::providers::applefm::AppleFm::new()),
         "openai" => Box::new(OpenAi { base: get("OPENAI_BASE_URL").unwrap_or_else(|| "https://api.openai.com/v1".into()), key: key("OPENAI_API_KEY") }),
         "lmstudio" => Box::new(OpenAi { base: get("LMSTUDIO_BASE_URL").unwrap_or_else(|| "http://localhost:1234/v1".into()), key: String::new() }),
         "openrouter" => Box::new(OpenAi { base: "https://openrouter.ai/api/v1".into(), key: key("OPENROUTER_API_KEY") }),
@@ -673,7 +673,7 @@ mod conformance {
     #[test]
     #[ignore = "needs a real provider (SUNDAY_PROVIDER_TEST=1)"]
     fn live() {
-        let model = std::env::var("SUNDAY_MODEL").unwrap_or_else(|_| crate::llm::MODEL.into());
+        let model = std::env::var("SUNDAY_MODEL").unwrap_or_else(|_| crate::brain::llm::MODEL.into());
         let msgs = [json!({"role": "user", "content": "Say hello in one word."})];
         let p = current();
         assert!(!p.complete(&model, &msgs, None, 60).unwrap().trim().is_empty());

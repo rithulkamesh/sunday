@@ -1,6 +1,6 @@
 //! "Is this me?": speaker embeddings (wespeaker ResNet34, via sherpa-onnx) compared by cosine
 //! similarity against a voiceprint learned from about 20 s of the owner's speech.
-use crate::models::path;
+use crate::voice::models::path;
 use sherpa_onnx::{SpeakerEmbeddingExtractor, SpeakerEmbeddingExtractorConfig};
 
 const MODEL: &str = "wespeaker_en_voxceleb_resnet34_LM.onnx";
@@ -101,7 +101,7 @@ mod tests {
     #[test]
     #[ignore = "needs the speech models from scripts/fetch-models.sh"]
     fn tells_voices_apart() {
-        let tts = crate::tts::Speaker::new().expect("tts unavailable");
+        let tts = crate::voice::tts::Speaker::new().expect("tts unavailable");
         let rs = sherpa_onnx::LinearResampler::create(24_000, 16_000).unwrap();
         let voice = Voice::new().expect("speaker model missing: scripts/fetch-models.sh");
         let say = |sid: i32, t: &str| rs.resample(&tts.synth_sid(t, sid), true);

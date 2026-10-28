@@ -48,44 +48,45 @@ Every utterance becomes exactly one `Action` before anything runs. `Rules` is th
 
 | File | What it does |
 |---|---|
+| `voice/`, `providers/`, `store/`, `brain/`, `tools/` | The module groups below: audio in and out, model backends, storage, routing and turns, things Sunday can do (new capabilities such as a browser driver go in `tools/`) |
 | `main.rs` | App setup, Tauri commands, hotkeys, and wiring of the audio, speech and model threads |
-| `llm.rs` | The turn loop: routes an `Action`, builds the prompt with memory and note context, calls the chosen provider (chat, vision, embeddings, JSON-schema output), runs skills, ends sessions. Chat replies that claim a computer action are replaced with an honest line |
-| `provider.rs` | The `Provider` trait and its implementations: Ollama, MLX (in process), OpenAI-compatible, Anthropic, Gemini, Amazon Nova. Per-role settings (chat, planner), keys in the OS keychain, the conformance checks and their mock servers |
-| `applefm.rs` | The Apple Foundation Models provider: runs the `scripts/applefm.swift` helper per call (macOS 26) |
-| `mlx.rs` | The in-process MLX provider for Apple Silicon (no Ollama) |
-| `decision.rs` | `Action` enum, `Decider` trait, `Rules` router, `permitted()` |
-| `laya.rs` | The optional routing model: talks to the `tools/laya-router` program over stdin and stdout, builds the state text it was trained on, and applies the confidence gate (screen needs the most). Does nothing unless the model and program are installed |
-| `corrections.rs` | Instant learning for the router: spots a restated command right after a chat turn, stores the first utterance with its route and an embedding, and recalls close matches |
-| `agent.rs` | Acting on the computer: one typed `Step` at a time, planner prompt and schema, budgets (steps, time, failures), approvals by tier (`POLICY`) with taint, the typing and shortcut exceptions, path/URL safety checks, verifiers after each step, retry on failure, audit log. Tools: web search, look at screen, recall, open app / page / file, type, press keys, click, finish |
-| `learn.rs` | Teaching: learning plans, concepts, prerequisites, quizzing, grading, spaced review, and the persona prompt (`IDENTITY`) |
-| `memory.rs` | Long-term facts with provenance, confidence and embeddings; recall by meaning |
-| `localembed.rs` | On-device embeddings (all-MiniLM-L6-v2 via candle), so memory search works without Ollama |
-| `notes.rs` | Import PDF / Markdown / text, chunk and index in SQLite FTS5 |
-| `skills.rs` | Versioned prompt-only skills: proposed → experimental → approved, tests, rollback |
-| `web.rs` | Safe fetching (public addresses only, redirect re-checks, size caps), Readability extraction, headless Chrome fallback, search |
+| `brain/llm.rs` | The turn loop: routes an `Action`, builds the prompt with memory and note context, calls the chosen provider (chat, vision, embeddings, JSON-schema output), runs skills, ends sessions. Chat replies that claim a computer action are replaced with an honest line |
+| `providers/provider.rs` | The `Provider` trait and its implementations: Ollama, MLX (in process), OpenAI-compatible, Anthropic, Gemini, Amazon Nova. Per-role settings (chat, planner), keys in the OS keychain, the conformance checks and their mock servers |
+| `providers/applefm.rs` | The Apple Foundation Models provider: runs the `scripts/applefm.swift` helper per call (macOS 26) |
+| `providers/mlx.rs` | The in-process MLX provider for Apple Silicon (no Ollama) |
+| `brain/decision.rs` | `Action` enum, `Decider` trait, `Rules` router, `permitted()` |
+| `brain/laya.rs` | The optional routing model: talks to the `tools/laya-router` program over stdin and stdout, builds the state text it was trained on, and applies the confidence gate (screen needs the most). Does nothing unless the model and program are installed |
+| `brain/corrections.rs` | Instant learning for the router: spots a restated command right after a chat turn, stores the first utterance with its route and an embedding, and recalls close matches |
+| `tools/agent.rs` | Acting on the computer: one typed `Step` at a time, planner prompt and schema, budgets (steps, time, failures), approvals by tier (`POLICY`) with taint, the typing and shortcut exceptions, path/URL safety checks, verifiers after each step, retry on failure, audit log. Tools: web search, look at screen, recall, open app / page / file, type, press keys, click, finish |
+| `brain/learn.rs` | Teaching: learning plans, concepts, prerequisites, quizzing, grading, spaced review, and the persona prompt (`IDENTITY`) |
+| `store/memory.rs` | Long-term facts with provenance, confidence and embeddings; recall by meaning |
+| `providers/localembed.rs` | On-device embeddings (all-MiniLM-L6-v2 via candle), so memory search works without Ollama |
+| `store/notes.rs` | Import PDF / Markdown / text, chunk and index in SQLite FTS5 |
+| `brain/skills.rs` | Versioned prompt-only skills: proposed → experimental → approved, tests, rollback |
+| `tools/web.rs` | Safe fetching (public addresses only, redirect re-checks, size caps), Readability extraction, headless Chrome fallback, search |
 | `platform/` | Everything OS-specific behind the `Platform` trait: open app/page/file, type, shortcuts, click, screenshot, window list, OCR, browser address, permissions (screen recording, Accessibility). `macos.rs` is the real one; other OSes use `unsupported.rs`, which fails with a spoken message; tests use a recorder |
-| `screen.rs` | Screenshot, OCR boxes, window list, vision call, overlay drawing, click preview |
-| `stt.rs` | Speech to text (Parakeet via ONNX), wake-word spotting |
-| `tts.rs` | Text to speech (Kokoro): the voice and pace, the interrupt epoch, queueing |
-| `speaker.rs` | Voiceprint (wespeaker ResNet34), "is this the owner" check |
-| `bargein.rs` | Interrupt handling: stop words, talking over Sunday |
-| `mic.rs`, `models.rs` | Audio capture, model file locations |
-| `db.rs` | SQLite schema and queries |
-| `eval.rs` | The eval harness: loads `evals/*.jsonl`, runs routing and agent tasks in the sandbox, reports regressions (a test, so `cargo test` runs it) |
+| `tools/screen.rs` | Screenshot, OCR boxes, window list, vision call, overlay drawing, click preview |
+| `voice/stt.rs` | Speech to text (Parakeet via ONNX), wake-word spotting |
+| `voice/tts.rs` | Text to speech (Kokoro): the voice and pace, the interrupt epoch, queueing |
+| `voice/speaker.rs` | Voiceprint (wespeaker ResNet34), "is this the owner" check |
+| `voice/bargein.rs` | Interrupt handling: stop words, talking over Sunday |
+| `voice/mic.rs`, `voice/models.rs` | Audio capture, model file locations |
+| `store/db.rs` | SQLite schema and queries |
+| `brain/eval.rs` | The eval harness: loads `evals/*.jsonl`, runs routing and agent tasks in the sandbox, reports regressions (a test, so `cargo test` runs it) |
 
 ## Frontend (`src`)
 
 | File | View |
 |---|---|
-| `Workspace.tsx` | Main window: chat and typed input |
-| `Hud.tsx` | Floating status HUD |
-| `Overlay.tsx` | Click-through drawing layer for boxes, circles, arrows |
-| `Palette.tsx` | ⌘K command palette |
-| `Knowledge.tsx` | Notes import and search |
-| `Memory.tsx` | Browse and delete facts and pages |
-| `Skills.tsx` | Draft, test, approve, roll back skills |
-| `Providers.tsx` | Providers, keys and the model for each role |
-| `Settings.tsx` | Models, web switch, diagnostics |
+| `windows/Workspace.tsx` | Main window: chat and typed input |
+| `windows/Hud.tsx` | Floating status HUD |
+| `windows/Overlay.tsx` | Click-through drawing layer for boxes, circles, arrows |
+| `views/Palette.tsx` | ⌘K command palette |
+| `views/Knowledge.tsx` | Notes import and search |
+| `views/Memory.tsx` | Browse and delete facts and pages |
+| `views/Skills.tsx` | Draft, test, approve, roll back skills |
+| `views/Providers.tsx` | Providers, keys and the model for each role |
+| `views/Settings.tsx` | Models, web switch, diagnostics |
 | `ui.tsx`, `index.css` | Shared components and styles |
 
 ## Everything else

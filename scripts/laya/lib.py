@@ -10,7 +10,7 @@ ROUTES = list(QUESTION["route"]["criteria"])
 
 
 def state(last, reply, text):
-    """What the model reads. Must match `state()` in src-tauri/src/laya.rs."""
+    """What the model reads. Must match `state()` in src-tauri/src/brain/laya.rs."""
     ctx = f"Last thing the assistant did: {last}. It said: {reply[:200].strip()}\n" if last else ""
     return f"{ctx}User: {text}"
 

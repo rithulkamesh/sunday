@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Label } from "./ui";
+import { Label } from "../ui";
 
 type Skill = {
   id: string;

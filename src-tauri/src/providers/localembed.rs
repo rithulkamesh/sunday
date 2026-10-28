@@ -1,7 +1,7 @@
 //! Embeddings that run inside the app, with no Ollama: all-MiniLM-L6-v2 (384 numbers per text) on the CPU, through
 //! candle. The model is a few files under `~/.cache/sunday/models/embed/all-MiniLM-L6-v2`, put there by
 //! `scripts/fetch-embed-model.sh`; the app never downloads. Used for memory search when Settings picks it.
-use crate::llm::UserMsg;
+use crate::brain::llm::UserMsg;
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config};
@@ -21,7 +21,7 @@ struct Loaded {
 static LOADED: Mutex<Option<Loaded>> = Mutex::new(None);
 
 fn dir() -> std::path::PathBuf {
-    crate::models::dir().join("embed").join(NAME)
+    crate::voice::models::dir().join("embed").join(NAME)
 }
 
 pub fn installed() -> bool {

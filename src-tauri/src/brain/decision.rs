@@ -1,7 +1,7 @@
 //! Typed decisions: every utterance becomes exactly one `Action` before anything runs.
 //! `Decider` is the seam where a smarter router (Laya, an LLM) plugs in; `Rules` is the
 //! deterministic default and also the fallback when a router fails or isn't confident.
-use crate::learn;
+use crate::brain::learn;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Action {

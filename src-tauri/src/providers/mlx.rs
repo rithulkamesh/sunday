@@ -3,8 +3,8 @@
 //! `~/.cache/sunday/models/mlx/<owner>--<name>`, put there by `scripts/fetch-mlx-model.sh`; the app never downloads.
 //! No constrained decoding and no embeddings here: a schema goes in the prompt (`json_via` retries bad JSON), and
 //! memory search keeps using Ollama's embedding model, or plain keywords when that is missing.
-use crate::llm::{Res, UserMsg};
-use crate::provider::{split, Provider};
+use crate::brain::llm::{Res, UserMsg};
+use crate::providers::provider::{split, Provider};
 use mlex::generate::{GenerateOptions, Session};
 use mlex::sampling::SamplingConfig;
 use mlex::tokenizer::ChatMessage;
@@ -23,7 +23,7 @@ pub struct Mlx {
 
 impl Mlx {
     pub fn new() -> Mlx {
-        Mlx::at(crate::models::dir().join("mlx"))
+        Mlx::at(crate::voice::models::dir().join("mlx"))
     }
 
     pub fn at(dir: PathBuf) -> Mlx {

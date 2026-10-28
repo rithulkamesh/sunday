@@ -1,7 +1,7 @@
 //! SQLite: the authoritative record of what was said, what was asked, and when to ask again.
 //! Evidence (attempts) is stored raw; the review schedule is derived and can be rebuilt from it.
 use rusqlite::{params, Connection, OptionalExtension};
-use crate::skills::Manifest as Skill;
+use crate::brain::skills::Manifest as Skill;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
@@ -150,7 +150,7 @@ impl Db {
              CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(text, doc UNINDEXED, n UNINDEXED);",
         )?;
         let db = Self(Mutex::new(c));
-        for m in crate::skills::builtins() {
+        for m in crate::brain::skills::builtins() {
             if db.skill(&m.id, Some(m.version)).is_none() {
                 db.skill_put(&m);
             }
@@ -348,7 +348,7 @@ impl Db {
     /// Best passages for a question: BM25 candidates, kept only if they contain at least half
     /// of the query terms, so a stray common word never counts as a source.
     pub fn search(&self, q: &str, k: usize) -> Vec<Hit> {
-        let terms = crate::notes::terms(q);
+        let terms = crate::store::notes::terms(q);
         if terms.is_empty() {
             return vec![];
         }
@@ -360,7 +360,7 @@ impl Db {
             )
             .unwrap();
         let need = terms.len().div_ceil(2);
-        st.query_map([crate::notes::fts_query(&terms)], |r| Ok(Hit { title: r.get(0)?, n: r.get(1)?, text: r.get(2)? }))
+        st.query_map([crate::store::notes::fts_query(&terms)], |r| Ok(Hit { title: r.get(0)?, n: r.get(1)?, text: r.get(2)? }))
             .unwrap()
             .flatten()
             .filter(|h| {

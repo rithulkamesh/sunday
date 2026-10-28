@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Label } from "./ui";
+import { Label } from "../ui";
 
 type Node = { name: string; subject: string; status: "new" | "learning" | "known"; needs: string[] };
 type Doc = { id: number; title: string; chunks: number };

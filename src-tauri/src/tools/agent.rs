@@ -1,8 +1,8 @@
 //! Acting on the computer. One typed `Step` at a time from the model; read-only steps run straight away,
 //! anything that changes the machine is described out loud and waits for a yes. Every executed step is logged.
 //! State lives in the db (`agent` key) so a "yes" arriving as the next utterance can resume the loop.
-use crate::db::Db;
-use crate::llm::{self, Res};
+use crate::store::db::Db;
+use crate::brain::llm::{self, Res};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -158,7 +158,7 @@ fn browser_open() -> Option<String> {
     if sandbox::on() {
         return None;
     }
-    crate::screen::open_apps().into_iter().find(|a| BROWSERS.contains(&a.as_str()))
+    crate::tools::screen::open_apps().into_iter().find(|a| BROWSERS.contains(&a.as_str()))
 }
 
 /// How much harm a step can do, which decides whether it runs on its own.
@@ -287,7 +287,7 @@ fn exec(db: &Db, s: &Step, eyes: &Eyes) -> Result<String, String> {
         "open_url" => {
             let browser = browser_open();
             // A refinement of the page in front changes that tab instead of piling up new ones.
-            let reused = browser.as_deref().is_some_and(|b| crate::web::browser_url(b).is_ok_and(|front| same_host(&front, &s.url)) && os.navigate(s.url.trim(), b).is_ok());
+            let reused = browser.as_deref().is_some_and(|b| crate::tools::web::browser_url(b).is_ok_and(|front| same_host(&front, &s.url)) && os.navigate(s.url.trim(), b).is_ok());
             if reused { Ok("done".into()) } else { os.open_url(s.url.trim(), browser.as_deref()).map(|_| "done".into()) }
         }
         "open_path" => os.open_path(&safe_path(&s.path)?).map(|_| "done".into()),
@@ -298,11 +298,11 @@ fn exec(db: &Db, s: &Step, eyes: &Eyes) -> Result<String, String> {
             os.click(x, y).map(|_| "clicked".to_string())
         }
         "look_at_screen" => (eyes.look)(if s.query.trim().is_empty() { "what is on my screen" } else { s.query.trim() }),
-        "recall" => Ok(crate::memory::recall(db, &s.query, 4).iter().map(|f| f.text.clone()).collect::<Vec<_>>().join("; ")),
+        "recall" => Ok(crate::store::memory::recall(db, &s.query, 4).iter().map(|f| f.text.clone()).collect::<Vec<_>>().join("; ")),
         #[cfg(test)]
         "web_search" if sandbox::on() => Ok(sandbox::web().unwrap_or_default()),
         "web_search" if db.kv_get("web").as_deref() != Some("on") => Err("web access is off in Settings".into()),
-        "web_search" => crate::web::search(&s.query, 4).map(|r| r.iter().map(|(u, t)| format!("{t} ({u})")).collect::<Vec<_>>().join("\n")),
+        "web_search" => crate::tools::web::search(&s.query, 4).map(|r| r.iter().map(|(u, t)| format!("{t} ({u})")).collect::<Vec<_>>().join("\n")),
         _ => Err("nothing to run".into()),
     }
 }
@@ -557,7 +557,7 @@ pub fn start(db: &Db, task: &str, plan: &dyn Fn(&State) -> Res<Step>, eyes: &Eye
 
 /// The model picks the next step.
 pub fn model_plan(model: &str) -> impl Fn(&State) -> Res<Step> + '_ {
-    move |st| llm::json_via::<Pick>(&*crate::provider::planner(), model, SYSTEM, &prompt(st), schema(), 90).map(step_from)
+    move |st| llm::json_via::<Pick>(&*crate::providers::provider::planner(), model, SYSTEM, &prompt(st), schema(), 90).map(step_from)
 }
 
 #[cfg(test)]
@@ -837,7 +837,7 @@ mod live {
     #[ignore = "needs Ollama with the planner model from scripts/fetch-models.sh"]
     fn planner_fills_arguments_for_simple_tasks() {
         let db = Db::open(&std::env::temp_dir().join(format!("sunday-live-{}.db", std::process::id()))).unwrap();
-        let model = crate::provider::planner_model(&db);
+        let model = crate::providers::provider::planner_model(&db);
         let plan = model_plan(&model);
         let first = plan(&State { task: "open notes and type hello".into(), ..State::default() }).unwrap();
         assert_eq!((first.tool.as_str(), first.name.to_lowercase().as_str()), ("open_app", "notes"));

@@ -108,7 +108,7 @@ flowchart LR
 
 ## Add a provider
 
-1. Implement `Provider` in `src-tauri/src/provider.rs`: `complete`, `stream`, `models`, `warm`, `name`.
+1. Implement `Provider` in `src-tauri/src/providers/provider.rs`: `complete`, `stream`, `models`, `warm`, `name`.
 2. Add it to `build` and to the provider list in Settings.
 3. Add a mock that answers in its wire format and a test that calls `check`, as the existing providers do.
 4. Keep the safety rule: a new provider is opt-in and its calls only happen after the user picks it.

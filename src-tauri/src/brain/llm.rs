@@ -1,12 +1,12 @@
 //! The agent's brain. Routes what the user says (chat, a lesson, a quiz request, or the answer to a pending
 //! question) to the local Ollama model, stores the evidence, and delivers the reply to the
 //! workspace, the HUD and TTS.
-use crate::db::{Db, Fact, Hit, Pending};
-use crate::decision::{self, Action, Decider};
-use crate::skills::Manifest;
-use crate::learn::{self, Grade, Quiz};
-use crate::provider::{self, Provider};
-use crate::tts::{self, Cmd};
+use crate::store::db::{Db, Fact, Hit, Pending};
+use crate::brain::decision::{self, Action, Decider};
+use crate::brain::skills::Manifest;
+use crate::brain::learn::{self, Grade, Quiz};
+use crate::providers::provider::{self, Provider};
+use crate::voice::tts::{self, Cmd};
 use crate::Hud;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
@@ -87,8 +87,8 @@ fn warm_up(model: String) {
         let t = std::time::Instant::now();
         let chat = provider::current();
         chat.warm(&model);
-        let _ = crate::memory::embed(&["warm up".to_string()], true);
-        crate::laya::warm();
+        let _ = crate::store::memory::embed(&["warm up".to_string()], true);
+        crate::brain::laya::warm();
         eprintln!("[perf] {} and embedding models warmed up in {:?}", chat.name(), t.elapsed());
     });
 }
@@ -171,14 +171,14 @@ pub fn spawn(hud: Hud, speak: Sender<Cmd>, db: Arc<Db>) -> Sender<Turn> {
 fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
     let pending = c.db.pending();
     // A step waiting for a yes: this utterance is the answer (anything else drops the step and is handled normally).
-    if let Some(st) = crate::agent::waiting(c.db) {
-        match crate::agent::reply(q) {
-            crate::agent::Reply::Yes => return act(c, |plan, look| crate::agent::approve(c.db, st, plan, look)),
-            crate::agent::Reply::No => {
-                crate::agent::cancel(c.db, &st);
+    if let Some(st) = crate::tools::agent::waiting(c.db) {
+        match crate::tools::agent::reply(q) {
+            crate::tools::agent::Reply::Yes => return act(c, |plan, look| crate::tools::agent::approve(c.db, st, plan, look)),
+            crate::tools::agent::Reply::No => {
+                crate::tools::agent::cancel(c.db, &st);
                 return Ok(say(c, "Okay, I won't."));
             }
-            crate::agent::Reply::Other => crate::agent::cancel(c.db, &st),
+            crate::tools::agent::Reply::Other => crate::tools::agent::cancel(c.db, &st),
         }
     }
     let mut action = decision::Rules.decide(q, pending.is_some());
@@ -186,8 +186,8 @@ fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
     // No pattern matched. First what the user has corrected before, then the routing model if it is installed (laya.rs).
     if action == Action::Chat && pending.is_none() {
         let reply = history.iter().rev().find(|m| m["role"] == "assistant").and_then(|m| m["content"].as_str()).unwrap_or("");
-        let routed = crate::corrections::recall(c.db, last.as_deref().unwrap_or(""), q).or_else(|| crate::laya::route(last.as_deref(), reply, q).map(|r| r.name().to_string()));
-        if let Some(a) = routed.and_then(|r| crate::laya::action_for(&r, q)) {
+        let routed = crate::brain::corrections::recall(c.db, last.as_deref().unwrap_or(""), q).or_else(|| crate::brain::laya::route(last.as_deref(), reply, q).map(|r| r.name().to_string()));
+        if let Some(a) = routed.and_then(|r| crate::brain::laya::action_for(&r, q)) {
             action = a;
         }
     }
@@ -198,7 +198,7 @@ fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
         Action::Chat => "chat",
         _ => "other", // teaching, quizzes, notes...
     };
-    crate::corrections::observe(c.db, q, last.as_deref().unwrap_or(""), kind);
+    crate::brain::corrections::observe(c.db, q, last.as_deref().unwrap_or(""), kind);
     c.db.kv_set("last_route", if kind == "other" { "chat" } else { kind });
     let web_on = c.db.kv_get("web").as_deref() == Some("on");
     if let Err(why) = decision::permitted(&action, |id| c.db.skill(id, None).is_some(), web_on) {
@@ -227,49 +227,49 @@ fn route(c: &Ctx, history: &mut Vec<Value>, q: &str) -> Res<String> {
             Ok(say(c, "Okay, I've forgotten your voice. I'll answer anyone now."))
         }
         (Action::Teach(topic), _) => teach(c, history, &topic),
-        (Action::Do(task), _) => act(c, |plan, look| crate::agent::start(c.db, &task, plan, look)),
+        (Action::Do(task), _) => act(c, |plan, look| crate::tools::agent::start(c.db, &task, plan, look)),
         (Action::Remember(t), _) => {
-            let new = crate::memory::remember(c.db, &t);
+            let new = crate::store::memory::remember(c.db, &t);
             let _ = c.hud.app.emit("memory", json!({"kind": "user", "added": usize::from(new)}));
             Ok(say(c, if new { "Okay, I'll remember that." } else { "I already knew that." }))
         }
         (Action::LearnPage(url), _) => learn_page(c, url),
         (Action::Research(question), _) => research(c, history, &question),
         (Action::ClearScreen, _) => {
-            crate::screen::clear(&c.hud.app);
+            crate::tools::screen::clear(&c.hud.app);
             Ok(say(c, "Cleared."))
         }
         (Action::Screen(task), _) => {
             // Sentences are spoken as they're produced; `spoken` says whether that already happened.
-            let r = crate::screen::explain(&c.hud.app, c.db, &task, true, &|msg| {
+            let r = crate::tools::screen::explain(&c.hud.app, c.db, &task, true, &|msg| {
                 say(c, msg);
             }, &|| tts::epoch() != c.ep)?;
             if !r.marks.is_empty() {
-                crate::screen::show(&c.hud.app, &r.marks, 25);
+                crate::tools::screen::show(&c.hud.app, &r.marks, 25);
             }
             Ok(if r.spoken { r.text.trim().to_string() } else { say(c, &r.text) })
         }
         _ => {
             let notes = c.db.search(q, 3);
             // Long-term memory: skip the embedding call entirely while there's nothing to recall.
-            let memory = if c.db.facts(1).is_empty() { vec![] } else { crate::memory::recall(c.db, q, 4) };
+            let memory = if c.db.facts(1).is_empty() { vec![] } else { crate::store::memory::recall(c.db, q, 4) };
             chat(c, history, &Context { notes: &notes, memory: &memory, ..Context::default() })
         }
     }
 }
 
 /// Runs one stretch of the agent loop and speaks where it ended: the result, or the question it needs a yes to.
-fn act(c: &Ctx, run: impl FnOnce(&dyn Fn(&crate::agent::State) -> Res<crate::agent::Step>, &crate::agent::Eyes) -> Res<crate::agent::Out>) -> Res<String> {
+fn act(c: &Ctx, run: impl FnOnce(&dyn Fn(&crate::tools::agent::State) -> Res<crate::tools::agent::Step>, &crate::tools::agent::Eyes) -> Res<crate::tools::agent::Out>) -> Res<String> {
     let planner = provider::planner_model(c.db);
-    let plan = crate::agent::model_plan(&planner);
-    let look = |t: &str| crate::screen::explain(&c.hud.app, c.db, t, false, &|_| {}, &|| tts::epoch() != c.ep).map(|r| r.text).map_err(|e| e.to_string());
+    let plan = crate::tools::agent::model_plan(&planner);
+    let look = |t: &str| crate::tools::screen::explain(&c.hud.app, c.db, t, false, &|_| {}, &|| tts::epoch() != c.ep).map(|r| r.text).map_err(|e| e.to_string());
     let locate = |t: &str| {
-        let (x, y) = crate::screen::locate(c.db, t).map_err(|e| e.to_string())?;
-        crate::screen::preview(&c.hud.app, x, y, t);
+        let (x, y) = crate::tools::screen::locate(c.db, t).map_err(|e| e.to_string())?;
+        crate::tools::screen::preview(&c.hud.app, x, y, t);
         Ok((x, y))
     };
-    Ok(match run(&plan, &crate::agent::Eyes { look: &look, locate: &locate })? {
-        crate::agent::Out::Done(t) | crate::agent::Out::Ask(t) => say(c, &t),
+    Ok(match run(&plan, &crate::tools::agent::Eyes { look: &look, locate: &locate })? {
+        crate::tools::agent::Out::Done(t) | crate::tools::agent::Out::Ask(t) => say(c, &t),
     })
 }
 
@@ -306,7 +306,7 @@ fn remember_in_background(c: &Ctx, pages: Vec<(String, String, String)>) {
     let (db, hud, speak, model, voice) = (c.arc.clone(), c.hud.clone(), c.speak.clone(), c.model.to_string(), c.voice);
     std::thread::spawn(move || {
         let _one_at_a_time = LEARNING.lock();
-        let added: usize = pages.iter().map(|(url, title, text)| crate::memory::learn_page(&db, &model, url, title, text).0).sum();
+        let added: usize = pages.iter().map(|(url, title, text)| crate::store::memory::learn_page(&db, &model, url, title, text).0).sum();
         let _ = hud.app.emit("memory", json!({"kind": "web", "added": added}));
         if voice && added > 0 {
             tts::say(&speak, format!("I saved {added} things from that to memory."), tts::epoch());
@@ -324,14 +324,14 @@ fn learn_page(c: &Ctx, url: Option<String>) -> Res<String> {
     let address = match url {
         Some(u) => u,
         None => {
-            let app = crate::screen::front_app().unwrap_or_default();
-            crate::web::browser_url(&app).map_err(|e| UserMsg(format!("{e}.")))?
+            let app = crate::tools::screen::front_app().unwrap_or_default();
+            crate::tools::web::browser_url(&app).map_err(|e| UserMsg(format!("{e}.")))?
         }
     };
     say(c, "Reading it now.");
-    let page = crate::web::fetch(&address).map_err(|e| UserMsg(format!("I couldn't read that page: {e}.")))?;
+    let page = crate::tools::web::fetch(&address).map_err(|e| UserMsg(format!("I couldn't read that page: {e}.")))?;
     let title = if page.title.is_empty() { host(&page.url) } else { page.title.clone() };
-    c.db.add_document(&title, &page.url, &crate::notes::hash(&page.text), &crate::notes::chunk(&page.text));
+    c.db.add_document(&title, &page.url, &crate::store::notes::hash(&page.text), &crate::store::notes::chunk(&page.text));
     c.sources.borrow_mut().push(title.clone());
     let words = page.text.split_whitespace().count();
     let browser = if page.rendered { ", and I needed a browser to see it" } else { "" };
@@ -342,9 +342,9 @@ fn learn_page(c: &Ctx, url: Option<String>) -> Res<String> {
 /// Searches the web, reads the best results in parallel, answers from them with sources, and keeps what it read.
 fn research(c: &Ctx, history: &[Value], question: &str) -> Res<String> {
     say(c, "Let me look that up.");
-    let hits = crate::web::search(question, 5).map_err(|e| UserMsg(format!("The search failed: {e}.")))?;
-    let pages: Vec<crate::web::Page> = std::thread::scope(|s| {
-        let reads: Vec<_> = hits.iter().map(|(url, _)| s.spawn(move || crate::web::fetch(url).ok())).collect();
+    let hits = crate::tools::web::search(question, 5).map_err(|e| UserMsg(format!("The search failed: {e}.")))?;
+    let pages: Vec<crate::tools::web::Page> = std::thread::scope(|s| {
+        let reads: Vec<_> = hits.iter().map(|(url, _)| s.spawn(move || crate::tools::web::fetch(url).ok())).collect();
         reads.into_iter().filter_map(|h| h.join().ok().flatten()).take(3).collect()
     });
     if pages.is_empty() {
@@ -352,7 +352,7 @@ fn research(c: &Ctx, history: &[Value], question: &str) -> Res<String> {
     }
     let web: Vec<Hit> = pages
         .iter()
-        .map(|p| Hit { title: format!("{} ({})", if p.title.is_empty() { host(&p.url) } else { p.title.clone() }, host(&p.url)), n: 1, text: crate::web::snippet(&p.text, question, 2500) })
+        .map(|p| Hit { title: format!("{} ({})", if p.title.is_empty() { host(&p.url) } else { p.title.clone() }, host(&p.url)), n: 1, text: crate::tools::web::snippet(&p.text, question, 2500) })
         .collect();
     remember_in_background(c, pages.into_iter().map(|p| (p.url, p.title, p.text)).collect());
     chat(c, history, &Context { web: &web, ..Context::default() })
@@ -380,7 +380,7 @@ fn end_session(hud: &Hud, db: &Arc<Db>, history: &[Value]) {
     let (db, hud, model) = (db.clone(), hud.clone(), model_name(db));
     std::thread::spawn(move || {
         let _one_at_a_time = LEARNING.lock();
-        let (added, _) = crate::memory::learn_from_chat(&db, &model, &lines.join("\n"));
+        let (added, _) = crate::store::memory::learn_from_chat(&db, &model, &lines.join("\n"));
         if added > 0 {
             let _ = hud.app.emit("memory", json!({"kind": "chat", "added": added}));
         }
@@ -419,7 +419,7 @@ fn notes_lookup(c: &Ctx, query: &str) -> Res<String> {
 pub fn run_skill(db: &Db, model: &str, id: &str, version: Option<i64>, input: &str) -> Res<(Value, i64)> {
     let m: Manifest = db.skill(id, version).ok_or_else(|| format!("no such skill: {id}"))?;
     let t = std::time::Instant::now();
-    let user = crate::skills::render(&m, input);
+    let user = crate::brain::skills::render(&m, input);
     let system = format!("You are the skill {}: {} Reply with JSON only.", m.id, m.purpose);
     let res = json::<Value>(model, &system, &user, m.schema(), m.timeout_s).and_then(|v| m.validate(&v).map(|_| v).map_err(Into::into));
     let ms = t.elapsed().as_millis() as i64;
@@ -477,13 +477,13 @@ fn grade(c: &Ctx, p: &Pending, said: &str) -> Res<String> {
     c.db.attempt(p, said, g.verdict, &g.error_type, &g.feedback);
     c.db.set_pending(None);
     let lead = match g.verdict {
-        crate::db::Verdict::Correct => "Correct.",
-        crate::db::Verdict::Partial => "Partly right.",
-        crate::db::Verdict::Wrong => "Not quite.",
+        crate::store::db::Verdict::Correct => "Correct.",
+        crate::store::db::Verdict::Partial => "Partly right.",
+        crate::store::db::Verdict::Wrong => "Not quite.",
     };
     // A miss on a concept whose prerequisites are shaky usually means the gap is earlier in the graph.
     let gap = match (g.verdict, c.db.gaps(&p.concept).first()) {
-        (crate::db::Verdict::Wrong, Some(r)) => format!(" This builds on {r}; say quiz me on {r} to shore that up."),
+        (crate::store::db::Verdict::Wrong, Some(r)) => format!(" This builds on {r}; say quiz me on {r} to shore that up."),
         _ => String::new(),
     };
     Ok(say(c, &format!("{lead} {}{gap} Say next question when you're ready.", g.feedback.trim())))
@@ -699,7 +699,7 @@ mod tests {
         let ask = format!("Question: {}\nReference answer: {}\nLearner's answer: I have no idea", z.question, z.answer);
         let g: Grade = json(&m, learn::GRADE, &ask, learn::grade_schema(), 120).unwrap();
         println!("grade in {:?}: {g:?}", t.elapsed());
-        assert_eq!(g.verdict, crate::db::Verdict::Wrong);
+        assert_eq!(g.verdict, crate::store::db::Verdict::Wrong);
     }
 
     /// Needs Ollama: each built-in skill must pass its own tests, which is the bar for approval.
@@ -708,11 +708,11 @@ mod tests {
     fn builtin_skills_pass_their_tests() {
         let db = Db::open(&std::env::temp_dir().join(format!("sunday-test-{}.db", std::process::id()))).unwrap();
         let model = model_name(&db);
-        for m in crate::skills::builtins() {
+        for m in crate::brain::skills::builtins() {
             for t in &m.tests {
                 let t0 = std::time::Instant::now();
                 let (out, _) = run_skill(&db, &model, &m.id, Some(m.version), &t.input).unwrap();
-                let r = crate::skills::check(t, &out);
+                let r = crate::brain::skills::check(t, &out);
                 println!("{} {:?}: pass={} {} -> {out}", m.id, t0.elapsed(), r.pass, r.detail);
                 assert!(r.pass, "{}: {}", m.id, r.detail);
             }
@@ -726,14 +726,14 @@ mod tests {
     fn researches_a_question_from_the_web() {
         let q = "what is the banker's algorithm in operating systems";
         let t0 = std::time::Instant::now();
-        let hits = crate::web::search(q, 5).expect("search");
-        let pages: Vec<crate::web::Page> = std::thread::scope(|s| {
-            let reads: Vec<_> = hits.iter().map(|(u, _)| s.spawn(move || crate::web::fetch(u).ok())).collect();
+        let hits = crate::tools::web::search(q, 5).expect("search");
+        let pages: Vec<crate::tools::web::Page> = std::thread::scope(|s| {
+            let reads: Vec<_> = hits.iter().map(|(u, _)| s.spawn(move || crate::tools::web::fetch(u).ok())).collect();
             reads.into_iter().filter_map(|h| h.join().ok().flatten()).take(3).collect()
         });
         println!("read {} pages in {:?}: {:?}", pages.len(), t0.elapsed(), pages.iter().map(|p| host(&p.url)).collect::<Vec<_>>());
         assert!(!pages.is_empty());
-        let web: Vec<Hit> = pages.iter().map(|p| Hit { title: format!("{} ({})", p.title, host(&p.url)), n: 1, text: crate::web::snippet(&p.text, q, 2500) }).collect();
+        let web: Vec<Hit> = pages.iter().map(|p| Hit { title: format!("{} ({})", p.title, host(&p.url)), n: 1, text: crate::tools::web::snippet(&p.text, q, 2500) }).collect();
         let history = vec![json!({"role": "system", "content": learn::IDENTITY}), json!({"role": "user", "content": q})];
         let (messages, sources) = build_messages(&history, &Context { web: &web, ..Context::default() });
         let t1 = std::time::Instant::now();
@@ -755,7 +755,7 @@ mod tests {
         let mut x = 12345u64;
         for i in 0..1500 {
             let e: Vec<f32> = (0..768).map(|_| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; (x % 2000) as f32 / 1000.0 - 1.0 }).collect();
-            db.fact_add(&crate::db::NewFact { kind: "web", source: "https://x.dev", title: "x", text: &format!("fact number {i} about processes"), confidence: 0.9, event_date: "" }, Some(&e));
+            db.fact_add(&crate::store::db::NewFact { kind: "web", source: "https://x.dev", title: "x", text: &format!("fact number {i} about processes"), confidence: 0.9, event_date: "" }, Some(&e));
         }
         let t = std::time::Instant::now();
         let _ = db.fact_embeddings();
@@ -766,11 +766,11 @@ mod tests {
 
         for round in ["cold or warm", "warm"] {
             let t = std::time::Instant::now();
-            let r = crate::memory::embed(&["when is my driving test".to_string()], true);
+            let r = crate::store::memory::embed(&["when is my driving test".to_string()], true);
             println!("embed one query ({round}): {:.0} ms ok={}", ms(t), r.is_ok());
         }
         let t = std::time::Instant::now();
-        let _ = crate::memory::recall(&db, "when is my driving test", 4);
+        let _ = crate::store::memory::recall(&db, "when is my driving test", 4);
         println!("recall over 1500 facts (embed + scan): {:.0} ms", ms(t));
 
         // Chat: time to the first token and to the first full sentence, with the real system prompt and some history.

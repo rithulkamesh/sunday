@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { VoiceBeam } from "voice-glow";
-import { Status, Words } from "./ui";
+import { Status, Words } from "../ui";
 
 type State = "idle" | "listening" | "thinking";
 

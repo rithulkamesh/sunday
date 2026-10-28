@@ -1,8 +1,8 @@
 //! Always on and tiny: Silero VAD + a keyword spotter ("sunday", "stop"). Parakeet TDT (hundreds
 //! of MB) is loaded only after a wake word or fn, and dropped after IDLE. Once loaded it decodes
 //! the growing utterance every 0.2 s so words appear live, then once more when the VAD closes it.
-use crate::models::path;
-use crate::speaker::{self, Voice};
+use crate::voice::models::path;
+use crate::voice::speaker::{self, Voice};
 use std::time::{Duration, Instant};
 use sherpa_onnx::{
     KeywordSpotter, KeywordSpotterConfig, OfflineRecognizer, OfflineRecognizerConfig, OnlineStream,
@@ -422,7 +422,7 @@ mod tests {
     #[test]
     #[ignore = "needs the speech models from scripts/fetch-models.sh"]
     fn spots_keywords() {
-        let tts = crate::tts::Speaker::new().expect("tts unavailable");
+        let tts = crate::voice::tts::Speaker::new().expect("tts unavailable");
         let rs = sherpa_onnx::LinearResampler::create(24_000, 16_000).unwrap();
         let run = |text: &str, muted: bool| {
             let mut stt = Stt::new().expect("models missing");
@@ -447,7 +447,7 @@ mod tests {
     #[test]
     #[ignore = "needs the speech models from scripts/fetch-models.sh"]
     fn long_muted_speech_is_flushed() {
-        let tts = crate::tts::Speaker::new().expect("tts unavailable");
+        let tts = crate::voice::tts::Speaker::new().expect("tts unavailable");
         let rs = sherpa_onnx::LinearResampler::create(24_000, 16_000).unwrap();
         let mut stt = Stt::new().expect("models missing");
         let said = "This is a long reply that keeps going without any real pause between the sentences so the detector sees one continuous stretch of speech. ".repeat(4);
@@ -464,7 +464,7 @@ mod tests {
     #[test]
     #[ignore = "needs the speech models from scripts/fetch-models.sh"]
     fn enrolls_then_verifies() {
-        let tts = crate::tts::Speaker::new().expect("tts unavailable");
+        let tts = crate::voice::tts::Speaker::new().expect("tts unavailable");
         let rs = sherpa_onnx::LinearResampler::create(24_000, 16_000).unwrap();
         let say = |sid: i32, t: &str| {
             let mut a = vec![0.0f32; 12_000];
@@ -511,7 +511,7 @@ mod tests {
     #[test]
     #[ignore = "needs the speech models from scripts/fetch-models.sh; a benchmark"]
     fn bench_speech_pipeline() {
-        let tts = crate::tts::Speaker::new().expect("tts unavailable");
+        let tts = crate::voice::tts::Speaker::new().expect("tts unavailable");
         let rs = sherpa_onnx::LinearResampler::create(24_000, 16_000).unwrap();
         let said = "The scheduler picks the next process from the ready queue and gives it the processor for a short time slice, and when the slice ends the process goes back to the queue. \
             Dynamic programming stores the answers to small subproblems so that each one is only computed once, which turns an exponential search into a polynomial one. \
