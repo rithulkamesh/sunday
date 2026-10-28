@@ -1,0 +1,52 @@
+name: Nightly eval
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  eval:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          prefix-key: v2-rust
+      - name: Run the suite
+        working-directory: src-tauri
+        run: cargo test --bin sunday eval_suite -- --nocapture
+      # One line per night ({date, sha, passed, total}) on the `eval-history` branch, so the pass rate over time is
+      # a file anyone can read or plot. Tasks marked xfail are not counted.
+      - name: Record the pass rate
+        run: |
+          set -euo pipefail
+          latest=evals/runs/latest.jsonl
+          total=$(jq -s '[.[] | select(.xfail == null or .pass == true)] | length' "$latest")
+          passed=$(jq -s '[.[] | select(.pass == true)] | length' "$latest")
+          line=$(jq -nc --arg date "$(date -u +%F)" --arg sha "$GITHUB_SHA" --argjson passed "$passed" --argjson total "$total" \
+            '{date: $date, sha: $sha, passed: $passed, total: $total}')
+          cp "$latest" "$RUNNER_TEMP/latest.jsonl"
+          git fetch origin eval-history || true
+          if git rev-parse --verify origin/eval-history >/dev/null 2>&1; then
+            git checkout -f -B eval-history origin/eval-history
+          else
+            git checkout --orphan eval-history && git rm -rf . >/dev/null
+          fi
+          echo "$line" >> history.jsonl
+          cp "$RUNNER_TEMP/latest.jsonl" latest.jsonl
+          { echo "### Pass rate"; echo; echo '| date | passed | total |'; echo '|---|---|---|'
+            tail -n 14 history.jsonl | jq -r '"| \(.date) | \(.passed) | \(.total) |"'; } | tee -a "$GITHUB_STEP_SUMMARY" > trend.md
+          git config user.name "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          git add history.jsonl latest.jsonl trend.md
+          git commit -m "eval: $line"
+          git push origin eval-history

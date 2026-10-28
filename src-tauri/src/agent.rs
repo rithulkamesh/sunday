@@ -233,7 +233,10 @@ fn safe_path(p: &str) -> Result<std::path::PathBuf, String> {
     let p = p.trim();
     let full = if let Some(rest) = p.strip_prefix("~/") { home().join(rest) } else { p.into() };
     let full = std::path::Path::new(&full).canonicalize().map_err(|_| format!("I can't find {p}."))?;
-    let rel = full.strip_prefix(home()).map_err(|_| "I only open things in your home folder.".to_string())?;
+    // `full` is canonical, so compare against the canonical home (macOS temp dirs and some homes are symlinks).
+    let home = home();
+    let home = home.canonicalize().unwrap_or(home);
+    let rel = full.strip_prefix(&home).map_err(|_| "I only open things in your home folder.".to_string())?;
     if rel.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.')) {
         return Err("I don't open hidden files or folders.".into());
     }
@@ -565,6 +568,36 @@ mod tests {
         let mut s = Step { tool: tool.into(), ..Step::default() };
         f(&mut s);
         s
+    }
+
+    #[test]
+    fn path_policy_blocks_traversal_symlinks_and_hidden() {
+        let root = std::env::temp_dir().join(format!("sunday-paths-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (home, outside) = (root.join("home"), root.join("outside"));
+        for d in [home.join("Docs"), home.join(".ssh"), outside.clone()] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(home.join("Docs/a.txt"), "x").unwrap();
+        std::fs::write(home.join(".ssh/key"), "x").unwrap();
+        std::fs::write(outside.join("b.txt"), "x").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, home.join("Docs/escape")).unwrap();
+            std::os::unix::fs::symlink(home.join(".ssh"), home.join("Docs/to-hidden")).unwrap();
+        }
+        let (out, _) = sandbox::run(sandbox::Sandbox { home: home.clone(), ..Default::default() }, || {
+            let ok = |p: &str| safe_path(p).is_ok();
+            let absolute = outside.join("b.txt").to_string_lossy().to_string();
+            let mut paths = vec!["~/Docs/../../outside/b.txt", "~/../outside/b.txt", "~/.ssh/key", "~/Docs/../.ssh/key", "~/missing.txt", &absolute];
+            #[cfg(unix)]
+            paths.extend(["~/Docs/escape/b.txt", "~/Docs/to-hidden/key"]);
+            let bad = paths.into_iter().filter(|p| ok(p)).map(String::from).collect::<Vec<_>>();
+            (ok("~/Docs/a.txt"), ok("~/Docs/../Docs/a.txt"), bad)
+        });
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(out.0 && out.1, "files inside home must open");
+        assert!(out.2.is_empty(), "these paths must be refused: {:?}", out.2);
     }
 
     #[test]
